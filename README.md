@@ -17,13 +17,13 @@ tiny CNN
 项目在 RVNPU 开发容器中构建和测试。默认目录如下：
 
 ```text
-/workspace/onnxruntime-rvnpu   本项目
-/workspace/RVNPU-compiler      RVNPU 编译器
-/workspace/npu-kernels         device kernel 和 ABI bridge
-/workspace/npu-runtime         host runtime
-/workspace/npu-qemu            QEMU
-/workspace/NPU-Setup           emulator 启动环境
-/workspace/llvm-build          RVNPU LLVM 构建目录
+目录                           作用                         分支
+/workspace/onnxruntime-rvnpu   本项目                       main
+/workspace/RVNPU-compiler      RVNPU 编译器                 rvtv2/dev
+/workspace/npu-kernels         device kernel 和 ABI bridge  rvtv2/stable
+/workspace/npu-runtime         host runtime                 rvtv2/stable
+/workspace/npu-qemu            QEMU                         rvtv2/stable
+/workspace/NPU-Setup           emulator 启动环境            rvtv2/stable
 ```
 
 ### 准备 NPU-Setup
