@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Generate one standard ONNX CNN and independent ReferenceEvaluator data."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import onnx
+from onnx import TensorProto, helper, numpy_helper, shape_inference
+from onnx.reference import ReferenceEvaluator
+
+
+def deterministic_values(shape: tuple[int, ...], scale: float, offset: int) -> np.ndarray:
+    count = int(np.prod(shape))
+    values = ((np.arange(count, dtype=np.int32) * 17 + offset) % 31 - 15).astype(np.float32)
+    return (values * np.float32(scale)).reshape(shape)
+
+
+def build_model() -> onnx.ModelProto:
+    # Sparse selector kernels keep the integration model's values exactly
+    # representable while still exercising Conv, Relu and MaxPool scheduling.
+    conv_weight = np.zeros((2, 1, 3, 3), dtype=np.float32)
+    conv_weight[0, 0, 1, 1] = np.float32(1.0)
+    conv_weight[1, 0, 0, 0] = np.float32(0.5)
+    conv_bias = np.zeros((2,), dtype=np.float32)
+    matmul_weight = deterministic_values((32, 32), 1.0 / 32.0, 7)
+
+    nodes = [
+        helper.make_node("Conv", ["input", "conv_weight", "conv_bias"], ["conv_out"], name="conv"),
+        helper.make_node("Relu", ["conv_out"], ["relu_out"], name="relu"),
+        helper.make_node(
+            "MaxPool", ["relu_out"], ["pool_out"], name="maxpool", kernel_shape=[2, 2], strides=[2, 2]
+        ),
+        helper.make_node("Flatten", ["pool_out"], ["flat_out"], name="flatten", axis=1),
+        helper.make_node("MatMul", ["flat_out", "matmul_weight"], ["output"], name="matmul"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "rvnpu_tiny_cnn",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 1, 10, 10])],
+        [
+            helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 32]),
+            helper.make_tensor_value_info("flat_out", TensorProto.FLOAT, [1, 32]),
+        ],
+        [
+            numpy_helper.from_array(conv_weight, "conv_weight"),
+            numpy_helper.from_array(conv_bias, "conv_bias"),
+            numpy_helper.from_array(matmul_weight, "matmul_weight"),
+        ],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 13)],
+        producer_name="onnxruntime-rvnpu",
+        ir_version=10,
+    )
+    onnx.checker.check_model(model)
+    inferred = shape_inference.infer_shapes(model)
+    onnx.checker.check_model(inferred)
+    expected = ["Conv", "Relu", "MaxPool", "Flatten", "MatMul"]
+    actual = [node.op_type for node in inferred.graph.node]
+    if actual != expected:
+        raise RuntimeError(f"unexpected graph nodes: {actual}")
+    return inferred
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    model = build_model()
+    model_path = args.output_dir / "tiny_cnn.onnx"
+    onnx.save(model, model_path)
+
+    input_data = deterministic_values((1, 1, 10, 10), 1.0 / 16.0, 11)
+    output, flat = ReferenceEvaluator(model).run(None, {"input": input_data})
+    input_data.astype(np.float32).tofile(args.output_dir / "input.bin")
+    np.asarray(output, dtype=np.float32).tofile(args.output_dir / "reference_output.bin")
+    np.asarray(flat, dtype=np.float32).tofile(args.output_dir / "reference_flat.bin")
+    numpy_helper.to_array(model.graph.initializer[2]).astype(np.float32).tofile(
+        args.output_dir / "matmul_weight.bin"
+    )
+
+    summary = {
+        "ir_version": model.ir_version,
+        "opsets": {item.domain or "ai.onnx": item.version for item in model.opset_import},
+        "nodes": [
+            {"name": node.name, "domain": node.domain or "ai.onnx", "op_type": node.op_type}
+            for node in model.graph.node
+        ],
+        "inputs": {"input": [1, 1, 10, 10]},
+        "outputs": {"output": [1, 32], "flat_out": [1, 32]},
+        "initializers": [
+            {"name": item.name, "dims": list(item.dims), "data_type": item.data_type}
+            for item in model.graph.initializer
+        ],
+    }
+    (args.output_dir / "model-summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(model_path)
+
+
+if __name__ == "__main__":
+    main()
