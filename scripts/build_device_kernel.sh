@@ -17,3 +17,6 @@ RVTNG_QEMU_LOG="${QEMU_LOG}" bash "${RVNPU_COMPILER_ROOT}/integration/scripts/ru
   --llvm-build-dir "${LLVM_BUILD_DIR}" \
   --out-dir "${ROOT_DIR}/build/device" \
   --jobs "${JOBS:-8}"
+
+DEVICE_BUILD_DIR="${ROOT_DIR}/build/device/device_build" \
+  bash "${ROOT_DIR}/scripts/link_device_kernels.sh"

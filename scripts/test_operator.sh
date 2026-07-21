@@ -19,7 +19,7 @@ for required in "${PREPARE_SCRIPT}" "${RUN_SCRIPT}"; do
   fi
 done
 
-export RVNPU_KERNEL_ELF="${RVNPU_KERNEL_ELF:-${ROOT_DIR}/build/device/device_build/user_triton_matmul.elf}"
+export RVNPU_KERNEL_ELF="${RVNPU_KERNEL_ELF:-${ROOT_DIR}/build/device/device_build/rvnpu_kernels.elf}"
 if [[ ! -f "${RVNPU_KERNEL_ELF}" ]]; then
   echo "device ELF 不存在：${RVNPU_KERNEL_ELF}" >&2
   exit 2

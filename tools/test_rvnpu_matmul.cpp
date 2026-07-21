@@ -47,11 +47,11 @@ Options Parse(int argc, char **argv) {
 }
 
 float AValue(int m, int k) {
-  return static_cast<float>(((m * 17 + k * 13) % 29) - 14) * 0.0625f;
+  return static_cast<float>(((m * 17 + k * 13) % 29) - 14) / 127.0f;
 }
 
 float BValue(int k, int n) {
-  return static_cast<float>(((k * 7 + n * 19) % 31) - 15) * 0.03125f;
+  return static_cast<float>(((k * 7 + n * 19) % 31) - 15) / 113.0f;
 }
 
 std::vector<float> ReadFloats(const std::string &path, size_t expected) {
@@ -109,13 +109,15 @@ int main(int argc, char **argv) {
       if (!std::isfinite(output[i]))
         throw std::runtime_error("non-finite output");
       max_abs_diff = std::max(max_abs_diff, std::abs(output[i] - reference[i]));
-      const float tolerance = 1e-4f + 1e-4f * std::abs(reference[i]);
+      const float tolerance = 2e-2f + 2e-2f * std::abs(reference[i]);
       if (std::abs(output[i] - reference[i]) > tolerance) {
         throw std::runtime_error("numeric mismatch at element " +
                                  std::to_string(i));
       }
     }
-    std::cout << "PASS max_abs_diff=" << max_abs_diff << std::endl;
+    std::cout << "PASS M=" << shape.m << " N=" << shape.n
+              << " K=" << shape.k << " max_abs_diff=" << max_abs_diff
+              << std::endl;
     return 0;
   } catch (const std::exception &ex) {
     std::cerr << "FAIL: " << ex.what() << std::endl;

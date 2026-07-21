@@ -45,7 +45,12 @@ add_library(rvnpu_ep SHARED
   src/plugin/ep.cpp
   src/plugin/memory.cpp
   src/plugin/kernel_registry.cpp
-  src/ops/matmul/matmul.cpp)
+  src/ops/conv/conv.cpp
+  src/ops/elementwise/elementwise.cpp
+  src/ops/matmul/matmul.cpp
+  src/ops/maxpool/maxpool.cpp
+  src/ops/topk/topk.cpp
+  src/ops/nms/nms.cpp)
 target_include_directories(rvnpu_ep PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(rvnpu_ep PRIVATE rvnpu_runtime_bridge "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(rvnpu_ep PROPERTIES
@@ -56,14 +61,49 @@ set_target_properties(rvnpu_ep PROPERTIES
 target_link_options(rvnpu_ep PRIVATE
   "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/rvnpu_ep.lds")
 
-add_executable(rvnpu_ort_runner tools/rvnpu_ort_runner.cpp)
-target_include_directories(rvnpu_ort_runner PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(rvnpu_ort_runner PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(rvnpu_ort_runner PROPERTIES BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
+add_executable(test_rvnpu_tiny_cnn tools/test_rvnpu_tiny_cnn.cpp)
+target_include_directories(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_tiny_cnn PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(rvnpu_matmul_probe tools/rvnpu_matmul_probe.cpp)
-target_include_directories(rvnpu_matmul_probe PRIVATE src)
-target_link_libraries(rvnpu_matmul_probe PRIVATE rvnpu_runtime_bridge)
+add_executable(test_rvnpu_onnx_model tools/test_rvnpu_onnx_model.cpp)
+target_include_directories(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_onnx_model PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
+
+add_executable(test_rvnpu_matmul tools/test_rvnpu_matmul.cpp)
+target_include_directories(test_rvnpu_matmul PRIVATE src)
+target_link_libraries(test_rvnpu_matmul PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_elementwise tools/test_rvnpu_elementwise.cpp)
+target_include_directories(test_rvnpu_elementwise PRIVATE src)
+target_link_libraries(test_rvnpu_elementwise PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_conv_maxpool tools/test_rvnpu_conv_maxpool.cpp)
+target_include_directories(test_rvnpu_conv_maxpool PRIVATE src)
+target_link_libraries(test_rvnpu_conv_maxpool PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_topk tools/test_rvnpu_topk.cpp)
+target_include_directories(test_rvnpu_topk PRIVATE src)
+target_link_libraries(test_rvnpu_topk PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_topk_onnx tools/test_rvnpu_topk_onnx.cpp)
+target_include_directories(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_topk_onnx PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
+
+add_executable(test_rvnpu_nms tools/test_rvnpu_nms.cpp)
+target_include_directories(test_rvnpu_nms PRIVATE src)
+target_link_libraries(test_rvnpu_nms PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_nms_onnx tools/test_rvnpu_nms_onnx.cpp)
+target_include_directories(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_nms_onnx PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
 enable_testing()
 add_executable(tensor_utils_test tests/tensor_utils_test.cpp)

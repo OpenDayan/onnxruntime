@@ -1,74 +1,59 @@
 # RVNPU ONNX Runtime Plugin EP
 
-本项目为 ONNX Runtime 提供独立的 `RVNPUExecutionProvider`。
+本项目提供独立的 `RVNPUExecutionProvider`，不修改官方 ONNX Runtime。
 
-当前已经跑通：
+当前支持标准 ONNX 算子：
 
 ```text
-tiny CNN
-  Conv -> Relu -> MaxPool -> Flatten -> MatMul
-   CPU     CPU       CPU        CPU        RVNPU
+MatMul, Add, Mul, Sigmoid, Conv, MaxPool, TopK, NonMaxSuppression
 ```
 
-当前 NPU 支持范围是 opset 13、FP32、静态二维输入的 `ai.onnx::MatMul`。
+YOLOv8n 中满足首版约束的 `Conv/Add/Mul/Sigmoid/MaxPool` 由 RVNPU 执行，数据整理节点由 CPU EP 执行。
 
 ## 1. 准备开发环境
 
-项目在 RVNPU 开发容器中构建和测试。默认目录如下：
+项目在 RVNPU Linux 开发容器中构建。当前开发分支和默认目录如下：
 
 ```text
-目录                           作用                         分支
-/workspace/onnxruntime-rvnpu   本项目                       main
-/workspace/RVNPU-compiler      RVNPU 编译器                 rvtv2/dev
-/workspace/npu-kernels         device kernel 和 ABI bridge  rvtv2/stable
-/workspace/npu-runtime         host runtime                 rvtv2/stable
-/workspace/npu-qemu            QEMU                         rvtv2/stable
-/workspace/NPU-Setup           emulator 启动环境            rvtv2/stable
+/workspace/onnxruntime-rvnpu   codex/yolov8n-core-ops
+/workspace/RVNPU-compiler      rvtv2/dev
+/workspace/npu-kernels         codex/yolov8n-kernels
+/workspace/npu-runtime         rvtv2/stable
+/workspace/npu-firmware        rvtv2/stable
+/workspace/npu-qemu            rvtv2/stable
+/workspace/rvtng-cmodel        rvtv2/stable
+/workspace/NPU-Setup           rvtv2/stable
+/workspace/llvm-build          RVNPU LLVM 构建目录
 ```
 
-### 准备 NPU-Setup
-
-在 Linux 开发容器中编译 emulator、QEMU 和 firmware：
+全新环境先在 `NPU-Setup` 拉取依赖：
 
 ```bash
 cd /workspace/NPU-Setup
+./1.init_repo.sh
+```
+
+仓库已经位于 `/workspace` 时，不要重复执行。构建 emulator、QEMU 和 firmware：
+
+```bash
 ./3.compile_emu.sh
 ./4.compile_qemu.sh
 ./5.compile_firmware.sh
 ```
 
-如果是标准的全新 `NPU-Setup` 仓库，并且 `workspace/` 中还没有各依赖仓库，需要先执行一次：
+测试脚本会自动启动和关闭 emulator，不需要手动运行 `6.0.run_emu.sh`。
 
-```bash
-./1.init_repo.sh
-```
-
-当前开发容器已经把各仓库放在 `/workspace/`，不需要重复执行 `1.init_repo.sh`。本项目也不需要执行 `2.compile_kernels.sh`，MatMul device ELF 会由 `run_e2e.sh` 单独构建。测试时不需要手动运行 `6.0.run_emu.sh`，测试脚本会自动启动和关闭 emulator。
-
-
-## 2. 第一次运行前安装依赖
-
-进入项目目录：
+## 2. 安装依赖
 
 ```bash
 cd /workspace/onnxruntime-rvnpu
-```
-
-下载固定版本的官方 ONNX Runtime C/C++ SDK：
-
-```bash
 ./scripts/fetch_onnxruntime_sdk.sh
-```
-
-安装生成 ONNX 模型和 reference 数据所需的 Python 包：
-
-```bash
 python3 -m pip install --user -r requirements.txt
 ```
 
-## 3. 设置依赖路径
+脚本下载固定版本的 ONNX Runtime 1.26.0 C/C++ SDK，不需要另行 clone 官方 `onnxruntime` 仓库。
 
-在当前容器终端执行：
+## 3. 设置路径
 
 ```bash
 export ONNXRUNTIME_ROOT=/workspace/onnxruntime-rvnpu/build/ort-sdk
@@ -82,58 +67,48 @@ export LLVM_BUILD_DIR=/workspace/llvm-build
 export PYTHON_EXECUTABLE=python3
 ```
 
-## 4. 验证环境和完整执行链
-
-`run_e2e.sh` 用于第一次配置环境后的整体检查，以及修改公共框架后的完整回归：
+## 4. 首次构建
 
 ```bash
 ./scripts/run_e2e.sh
 ```
 
-脚本会自动完成：
-
-1. 构建 `librvnpu_ep.so` 和测试工具；
-2. 通过 RVNPU-compiler 构建 MatMul device ELF；
-3. 生成测试数据并运行 MatMul 测试。
-
-正常输出如下：
-
-```text
-[1/3] 构建 Plugin ... PASS
-[2/3] 构建 device ELF ... PASS
-[3/3] 验证 MatMul ... PASS
-
-全部验证通过。
-```
-
-成功后主要产物是：
+它会构建 Plugin、生成包含全部 kernel 的 device ELF，并运行 MatMul/tiny CNN 回归。主要产物：
 
 ```text
 build/linux/librvnpu_ep.so
-build/device/device_build/user_triton_matmul.elf
+build/device/device_build/rvnpu_kernels.elf
 ```
 
-## 5. 查看失败原因
-
-脚本使用临时日志。成功后自动删除；失败时在终端显示最后 80 行。
-
-## 6. 单算子测试
-
-日常开发或新增算子时，不需要反复运行完整 E2E。测试 MatMul 使用：
+## 5. 单算子测试
 
 ```bash
 ./scripts/test_operator.sh matmul
+./scripts/test_operator.sh add
+./scripts/test_operator.sh mul
+./scripts/test_operator.sh sigmoid
+./scripts/test_operator.sh conv
+./scripts/test_operator.sh maxpool
+./scripts/test_operator.sh topk
+./scripts/test_operator.sh nms
 ```
 
-预计输出：
+每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。NMS 测试还包含标准 `TopK → NMS` 后处理子图。
 
-```text
-[1/2] Direct kernel 数值测试
-      M=1,N=32,K=32       PASS max_abs_diff=0
-      M=32,N=32,K=32      PASS max_abs_diff=0
-      M=3,N=5,K=7         PASS max_abs_diff=0
+## 6. YOLOv8n 测试
 
-[2/2] tiny CNN：CPU/reference/RVNPU 输出对比
-      CPU vs ReferenceEvaluator max_abs_diff=0
-      RVNPU vs golden max_abs_diff=0
+首次导出模型前安装固定版本：
+
+```bash
+python3 -m pip install --user ultralytics==8.4.92
 ```
+
+执行：
+
+```bash
+./scripts/test_operator.sh yolov8n
+```
+
+模型为 opset 13、FP32、静态 `[1,3,640,640]`，不包含 NMS。脚本会在内部检查实际 EP assignment，并分别运行一次 CPU 和 RVNPU。
+
+所有模型、SDK、ELF 和日志均生成在被忽略的 `build/` 中。

@@ -56,9 +56,14 @@ TensorShape(Ort::ConstValueInfo info) {
   return type_info.GetTensorTypeAndShapeInfo().GetShape();
 }
 
-inline bool IsFloatTensor(Ort::ConstValueInfo info) {
+inline bool IsTensorType(Ort::ConstValueInfo info,
+                         ONNXTensorElementDataType element_type) {
   const auto type_info = info.TypeInfo();
   return type_info.GetONNXType() == ONNX_TYPE_TENSOR &&
          type_info.GetTensorTypeAndShapeInfo().GetElementType() ==
-             ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+             element_type;
+}
+
+inline bool IsFloatTensor(Ort::ConstValueInfo info) {
+  return IsTensorType(info, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
 }

@@ -2,7 +2,12 @@
 
 #include <array>
 
+#include "ops/elementwise/elementwise.h"
 #include "ops/matmul/matmul.h"
+#include "ops/nms/nms.h"
+#include "ops/conv/conv.h"
+#include "ops/maxpool/maxpool.h"
+#include "ops/topk/topk.h"
 
 namespace rvnpu {
 
@@ -12,9 +17,23 @@ const OrtDataType *TensorType(ONNXTensorElementDataType type) {
   return result;
 }
 
-static constexpr std::array<BuildKernelCreateInfoFn, 1> kBuilders = {
+static constexpr std::array<BuildKernelCreateInfoFn, 8> kBuilders = {
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         MatMul)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Add)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Mul)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Sigmoid)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 11, 11,
+                                                        Conv)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 12, 12,
+                                                        MaxPool)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 11, 11,
+                                                        TopK)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(
+        kOnnxDomain, 11, 11, NonMaxSuppression)>,
 };
 
 size_t GetKernelCount() { return kBuilders.size(); }

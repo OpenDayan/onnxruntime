@@ -29,6 +29,13 @@ private:
   GetKernelRegistryImpl(OrtEp *, const OrtKernelRegistry **) noexcept;
 
   static bool SupportsMatMul(const Ort::ConstNode &node);
+  static bool SupportsBinaryElementwise(const Ort::ConstNode &node,
+                                        const char *operator_type);
+  static bool SupportsSigmoid(const Ort::ConstNode &node);
+  static bool SupportsConv(const Ort::ConstNode &node);
+  static bool SupportsMaxPool(const Ort::ConstNode &node);
+  static bool SupportsTopK(const Ort::ConstNode &node);
+  static bool SupportsNms(const Ort::ConstNode &node);
 
   RvnpuEpFactory &factory_;
   const OrtApi &api_;

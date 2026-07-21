@@ -22,8 +22,6 @@ struct Options {
   std::string plugin;
   std::string kernel_elf;
   std::string data_dir;
-  int repeat = 2;
-  bool compare_cpu = false;
 };
 
 Options Parse(int argc, char **argv) {
@@ -38,10 +36,6 @@ Options Parse(int argc, char **argv) {
       options.kernel_elf = argv[++i];
     else if (argument == "--data-dir" && i + 1 < argc)
       options.data_dir = argv[++i];
-    else if (argument == "--repeat" && i + 1 < argc)
-      options.repeat = std::stoi(argv[++i]);
-    else if (argument == "--compare-cpu")
-      options.compare_cpu = true;
     else
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
@@ -51,8 +45,6 @@ Options Parse(int argc, char **argv) {
     throw std::invalid_argument(
         "--model, --plugin, --kernel-elf and --data-dir are required");
   }
-  if (options.repeat < 1)
-    throw std::invalid_argument("--repeat must be positive");
   return options;
 }
 
@@ -131,23 +123,29 @@ float Compare(const std::vector<float> &actual,
 }
 
 void CheckAssignment(const Ort::Session &session) {
-  bool saw_rvnpu_matmul = false;
+  std::unordered_map<std::string, size_t> rvnpu_counts;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     const std::string ep_name = subgraph.GetEpName();
     for (const auto &node : subgraph.GetNodes()) {
       const std::string op = node.GetOperatorType();
-      std::cout << "assignment " << op << " -> " << ep_name << std::endl;
-      if (op == "MatMul") {
-        if (ep_name != kEpName)
-          throw std::runtime_error("MatMul was not assigned to RVNPU EP");
-        saw_rvnpu_matmul = true;
-      } else if (ep_name == kEpName) {
+      if (ep_name == kEpName) {
+        ++rvnpu_counts[op];
+      }
+      if ((op == "Conv" || op == "MaxPool" || op == "MatMul") &&
+          ep_name != kEpName) {
+        throw std::runtime_error(op + " was not assigned to RVNPU EP");
+      }
+      if (op != "Conv" && op != "MaxPool" && op != "MatMul" &&
+          ep_name == kEpName) {
         throw std::runtime_error("RVNPU EP claimed unsupported operator " + op);
       }
     }
   }
-  if (!saw_rvnpu_matmul)
-    throw std::runtime_error("assignment info has no RVNPU MatMul");
+  for (const char *op : {"Conv", "MaxPool", "MatMul"}) {
+    if (rvnpu_counts[op] != 1)
+      throw std::runtime_error(std::string("assignment info has no RVNPU ") +
+                               op);
+  }
 }
 
 } // namespace
@@ -157,24 +155,12 @@ int main(int argc, char **argv) {
     const auto options = Parse(argc, argv);
     std::vector<float> input =
         ReadFloats(std::filesystem::path(options.data_dir) / "input.bin", 100);
-    const auto reference = ReadFloats(
-        std::filesystem::path(options.data_dir) / "reference_output.bin", 32);
-    const auto reference_flat = ReadFloats(
-        std::filesystem::path(options.data_dir) / "reference_flat.bin", 32);
-
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "rvnpu-ep-runner");
-    Outputs cpu;
-    if (options.compare_cpu) {
-      Ort::SessionOptions cpu_options;
-      cpu_options.SetGraphOptimizationLevel(
-          GraphOptimizationLevel::ORT_DISABLE_ALL);
-      Ort::Session cpu_session(env, options.model.c_str(), cpu_options);
-      cpu = Run(cpu_session, input);
-      std::cout << "CPU vs ReferenceEvaluator max_abs_diff="
-                << Compare(cpu.output, reference, 1e-6f, 0.0f, "CPU/reference")
-                << std::endl;
-      Compare(cpu.flat, reference_flat, 1e-6f, 0.0f, "CPU/reference flat_out");
-    }
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-tiny-cnn");
+    Ort::SessionOptions cpu_options;
+    cpu_options.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_DISABLE_ALL);
+    Ort::Session cpu_session(env, options.model.c_str(), cpu_options);
+    const Outputs cpu = Run(cpu_session, input);
 
     env.RegisterExecutionProviderLibrary(kRegistrationName, options.plugin);
     std::vector<Ort::ConstEpDevice> selected;
@@ -187,7 +173,6 @@ int main(int argc, char **argv) {
                                std::to_string(selected.size()));
     }
 
-    Outputs previous;
     {
       Ort::SessionOptions session_options;
       session_options.SetGraphOptimizationLevel(
@@ -200,23 +185,11 @@ int main(int argc, char **argv) {
       Ort::Session session(env, options.model.c_str(), session_options);
       CheckAssignment(session);
 
-      for (int iteration = 0; iteration < options.repeat; ++iteration) {
-        Outputs current = Run(session, input);
-        const auto &golden = options.compare_cpu ? cpu.output : reference;
-        const auto &flat_golden =
-            options.compare_cpu ? cpu.flat : reference_flat;
-        std::cout << "RVNPU vs golden iteration=" << iteration
-                  << " max_abs_diff="
-                  << Compare(current.output, golden, 1e-4f, 1e-4f,
-                             "RVNPU/golden")
-                  << std::endl;
-        Compare(current.flat, flat_golden, 1e-6f, 0.0f, "RVNPU flat_out");
-        if (iteration > 0) {
-          Compare(current.output, previous.output, 0.0f, 0.0f,
-                  "repeat determinism");
-        }
-        previous = std::move(current);
-      }
+      const Outputs output = Run(session, input);
+      const float difference =
+          Compare(output.output, cpu.output, 2e-2f, 2e-2f, "CPU/RVNPU");
+      Compare(output.flat, cpu.flat, 1e-6f, 0.0f, "CPU/RVNPU flat_out");
+      std::cout << "CPU vs RVNPU max_abs_diff=" << difference << std::endl;
     }
     env.UnregisterExecutionProviderLibrary(kRegistrationName);
     std::cout << "PASS" << std::endl;

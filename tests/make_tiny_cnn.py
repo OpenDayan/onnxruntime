@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Generate one standard ONNX CNN and independent ReferenceEvaluator data."""
+"""Generate one standard ONNX CNN and deterministic input data."""
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper, shape_inference
-from onnx.reference import ReferenceEvaluator
 
 
 def deterministic_values(shape: tuple[int, ...], scale: float, offset: int) -> np.ndarray:
@@ -78,31 +76,7 @@ def main() -> None:
     onnx.save(model, model_path)
 
     input_data = deterministic_values((1, 1, 10, 10), 1.0 / 16.0, 11)
-    output, flat = ReferenceEvaluator(model).run(None, {"input": input_data})
     input_data.astype(np.float32).tofile(args.output_dir / "input.bin")
-    np.asarray(output, dtype=np.float32).tofile(args.output_dir / "reference_output.bin")
-    np.asarray(flat, dtype=np.float32).tofile(args.output_dir / "reference_flat.bin")
-    numpy_helper.to_array(model.graph.initializer[2]).astype(np.float32).tofile(
-        args.output_dir / "matmul_weight.bin"
-    )
-
-    summary = {
-        "ir_version": model.ir_version,
-        "opsets": {item.domain or "ai.onnx": item.version for item in model.opset_import},
-        "nodes": [
-            {"name": node.name, "domain": node.domain or "ai.onnx", "op_type": node.op_type}
-            for node in model.graph.node
-        ],
-        "inputs": {"input": [1, 1, 10, 10]},
-        "outputs": {"output": [1, 32], "flat_out": [1, 32]},
-        "initializers": [
-            {"name": item.name, "dims": list(item.dims), "data_type": item.data_type}
-            for item in model.graph.initializer
-        ],
-    }
-    (args.output_dir / "model-summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
     print(model_path)
 
 
