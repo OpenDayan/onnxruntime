@@ -16,9 +16,9 @@ Concat, Split, Slice, Resize, Transpose, Softmax, TopK, NonMaxSuppression
 项目在 RVNPU Linux 开发容器中构建。当前开发分支和默认目录如下：
 
 ```text
-/workspace/onnxruntime-rvnpu   rvtv2/yolov8n-ops
+/workspace/onnxruntime-rvnpu   main
 /workspace/RVNPU-compiler      rvtv2/dev
-/workspace/npu-kernels         rvtv2/onnx-kernel-opt
+/workspace/npu-kernels         rvtv2/onnx
 /workspace/npu-runtime         rvtv2/stable
 /workspace/npu-firmware        rvtv2/stable
 /workspace/npu-qemu            rvtv2/stable
