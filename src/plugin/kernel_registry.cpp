@@ -3,6 +3,12 @@
 #include <array>
 
 #include "ops/elementwise/elementwise.h"
+#include "ops/concat/concat.h"
+#include "ops/slice/slice.h"
+#include "ops/split/split.h"
+#include "ops/resize/resize.h"
+#include "ops/transpose/transpose.h"
+#include "ops/softmax/softmax.h"
 #include "ops/matmul/matmul.h"
 #include "ops/nms/nms.h"
 #include "ops/conv/conv.h"
@@ -17,13 +23,29 @@ const OrtDataType *TensorType(ONNXTensorElementDataType type) {
   return result;
 }
 
-static constexpr std::array<BuildKernelCreateInfoFn, 8> kBuilders = {
+static constexpr std::array<BuildKernelCreateInfoFn, 16> kBuilders = {
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         MatMul)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         Add)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         Mul)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Sub)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Div)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Concat)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Split)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Slice)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Resize)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Transpose)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        Softmax)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         Sigmoid)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 11, 11,

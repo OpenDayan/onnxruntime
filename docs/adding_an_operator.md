@@ -5,14 +5,19 @@
 | ONNX 算子 | 首版范围 | device 入口 |
 |---|---|---|
 | MatMul | FP32 输入输出、静态 rank-2、单次 BF16 计算 | `triton_matmul_fp32_kernel` |
-| Add / Mul | FP32、静态 rank 1～4、同形状或单向广播 | `kernel_add_fp32` / `kernel_mul_fp32` |
+| Add / Mul | FP32 rank 0～4 广播 | `kernel_add_fp32` / `kernel_mul_fp32` |
+| Sub / Div | FP32 rank 0～4 | `kernel_sub_fp32` / `kernel_div_fp32` |
 | Sigmoid | FP32、静态 rank 1～4 | `sigmoid_f32` |
 | Conv | FP32 输入输出、单次 BF16 MatMul、batch=1、group=1、1×1/3×3、stride 1/2、对称 padding | `im2col_nchw_fp32` + MatMul + Add |
 | MaxPool | FP32 NCHW、2×2/3×3/5×5、stride 1/2、对称 padding | `maxpool2d_nchw_fp32` |
+| Concat / Split / Slice | FP32 rank 1～4；Slice 只支持单 axis、step=1 | `concat_fp32` / `split_fp32` / `slice_fp32` |
+| Resize | FP32 NCHW、nearest、asymmetric、floor、整数倍放大 | `resize_nearest_nchw_fp32` |
+| Transpose | FP32 rank-4、perm=[0,2,1,3] | `transpose_0213_fp32` |
+| Softmax | FP32 rank-4、axis=1、axis 维为 16 | `softmax_axis1_fp32` |
 | TopK | FP32 rank-2、axis=-1、largest/sorted、常量 K≤300 | `topk_lastdim_fp32` |
 | NonMaxSuppression | corner boxes、batch=1、常量 max output≤300 | `non_max_suppression_fp32` |
 
-YOLOv8n 还需要 `Concat/Resize/Reshape/Split/Transpose/Slice` 等数据整理节点，当前由 CPU EP 执行。后续优先支持 nearest Resize、连续内存 Split/Concat，再处理 device buffer 跨节点复用。
+YOLOv8n 中的 `Constant`、`Shape`、`Gather`、`Reshape` 和单元素 INT64 Add/Div/Mul 留给 ORT 处理；它们生成或计算形状元数据，不需要 device kernel。
 
 `origin/conv-kernel` 已有 BF16/低比特直接 Conv 导出，但其 host 测试仍使用旧版 npu-runtime 加载 ABI；当前仅作 kernel 设计参考，尚未接入 Plugin EP。
 
@@ -35,7 +40,7 @@ ONNX ai.onnx::Conv
        分配 device buffer，完成 H2D、launch、D2H
 
   -> im2col_nchw_fp32
-       npu-kernels/kernel/kernel_conv.cpp
+       npu-kernels/kernel/kernel_im2col.cpp
 
   -> triton_matmul_fp32_kernel
        npu-kernels/kernel/triton_matmul_bridge.cpp

@@ -23,6 +23,7 @@ struct Options {
   std::string kernel_elf;
   std::string data_dir;
   std::string expected_operator;
+  std::string enabled_ops;
   std::unordered_map<std::string, size_t> expected_rvnpu_counts;
   float absolute = 1e-4f;
   float relative = 1e-4f;
@@ -63,6 +64,8 @@ Options Parse(int argc, char **argv) {
       options.kernel_elf = argv[++index];
     else if (argument == "--data-dir" && index + 1 < argc)
       options.data_dir = argv[++index];
+    else if (argument == "--enabled-ops" && index + 1 < argc)
+      options.enabled_ops = argv[++index];
     else if (argument == "--expect-rvnpu" && index + 1 < argc) {
       options.expected_operator = argv[++index];
     } else if (argument == "--expect-rvnpu-counts" && index + 1 < argc) {
@@ -285,8 +288,10 @@ int main(int argc, char **argv) {
           GraphOptimizationLevel::ORT_DISABLE_ALL);
       session_options.AddConfigEntry("session.record_ep_graph_assignment_info",
                                      "1");
-      const std::unordered_map<std::string, std::string> ep_options{
+      std::unordered_map<std::string, std::string> ep_options{
           {"kernel_elf", options.kernel_elf}};
+      if (!options.enabled_ops.empty())
+        ep_options.emplace("enabled_ops", options.enabled_ops);
       session_options.AppendExecutionProvider_V2(env, selected, ep_options);
       Ort::Session session(env, options.model.c_str(), session_options);
       CheckAssignment(session, options);

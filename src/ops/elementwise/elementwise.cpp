@@ -1,7 +1,5 @@
 #include "ops/elementwise/elementwise.h"
 
-#include <vector>
-
 #include "runtime/tensor_utils.h"
 
 namespace rvnpu {
@@ -10,7 +8,8 @@ namespace {
 
 OrtStatus *MissingContext(const char *name) {
   return Ort::GetApi().CreateStatus(
-      ORT_EP_FAIL, (std::string("RVNPU ") + name + " has no DeviceContext").c_str());
+      ORT_EP_FAIL,
+      (std::string("RVNPU ") + name + " has no DeviceContext").c_str());
 }
 
 void ValidateFloat(const Ort::ConstValue &value, const char *name) {
@@ -31,6 +30,14 @@ RVNPU_DEFINE_KERNEL(Mul, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     MulKernel)
+RVNPU_DEFINE_KERNEL(Sub, kOnnxDomain, 13,
+                    (Ort::KernelDefBuilder().AddTypeConstraint(
+                        "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
+                    SubKernel)
+RVNPU_DEFINE_KERNEL(Div, kOnnxDomain, 13,
+                    (Ort::KernelDefBuilder().AddTypeConstraint(
+                        "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
+                    DivKernel)
 RVNPU_DEFINE_KERNEL(Sigmoid, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
@@ -114,6 +121,90 @@ OrtStatus *ORT_API_CALL MulKernel::ComputeImpl(
 
 void ORT_API_CALL MulKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<MulKernel *>(kernel);
+}
+
+SubKernel::SubKernel(const OrtKernelInfo *info, DeviceContext *context)
+    : OrtKernelImpl{}, info_(info), context_(context) {
+  ort_version_supported = ORT_API_VERSION;
+  Compute = ComputeImpl;
+  Release = ReleaseImpl;
+}
+
+OrtStatus *SubKernel::Create(const OrtKernelInfo *info, void *state,
+                             OrtKernelImpl *&output) noexcept {
+  RVNPU_EXCEPTION_GUARD_BEGIN
+  if (state == nullptr)
+    return MissingContext("Sub");
+  output = new SubKernel(info, static_cast<DeviceContext *>(state));
+  return nullptr;
+  RVNPU_EXCEPTION_GUARD_END
+}
+
+OrtStatus *ORT_API_CALL SubKernel::ComputeImpl(
+    OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
+  RVNPU_EXCEPTION_GUARD_BEGIN
+  auto &self = *static_cast<SubKernel *>(kernel);
+  Ort::KernelContext kernel_context(context);
+  const Ort::ConstValue lhs = kernel_context.GetInput(0);
+  const Ort::ConstValue rhs = kernel_context.GetInput(1);
+  ValidateFloat(lhs, "Sub");
+  ValidateFloat(rhs, "Sub");
+  const auto shape = ValidateBinaryElementwiseShapes(
+      lhs.GetTensorTypeAndShapeInfo().GetShape(),
+      rhs.GetTensorTypeAndShapeInfo().GetShape(), "Sub");
+  if (shape.swap_inputs)
+    throw std::invalid_argument("RVNPU Sub requires lhs to match output shape");
+  Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
+  self.context_->RunSub(lhs.GetTensorData<float>(), rhs.GetTensorData<float>(),
+                        output.GetTensorMutableData<float>(), shape);
+  return nullptr;
+  RVNPU_EXCEPTION_GUARD_END
+}
+
+void ORT_API_CALL SubKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
+  delete static_cast<SubKernel *>(kernel);
+}
+
+DivKernel::DivKernel(const OrtKernelInfo *info, DeviceContext *context)
+    : OrtKernelImpl{}, info_(info), context_(context) {
+  ort_version_supported = ORT_API_VERSION;
+  Compute = ComputeImpl;
+  Release = ReleaseImpl;
+}
+
+OrtStatus *DivKernel::Create(const OrtKernelInfo *info, void *state,
+                             OrtKernelImpl *&output) noexcept {
+  RVNPU_EXCEPTION_GUARD_BEGIN
+  if (state == nullptr)
+    return MissingContext("Div");
+  output = new DivKernel(info, static_cast<DeviceContext *>(state));
+  return nullptr;
+  RVNPU_EXCEPTION_GUARD_END
+}
+
+OrtStatus *ORT_API_CALL DivKernel::ComputeImpl(
+    OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
+  RVNPU_EXCEPTION_GUARD_BEGIN
+  auto &self = *static_cast<DivKernel *>(kernel);
+  Ort::KernelContext kernel_context(context);
+  const Ort::ConstValue lhs = kernel_context.GetInput(0);
+  const Ort::ConstValue rhs = kernel_context.GetInput(1);
+  ValidateFloat(lhs, "Div");
+  ValidateFloat(rhs, "Div");
+  const auto shape = ValidateBinaryElementwiseShapes(
+      lhs.GetTensorTypeAndShapeInfo().GetShape(),
+      rhs.GetTensorTypeAndShapeInfo().GetShape(), "Div");
+  if (shape.swap_inputs)
+    throw std::invalid_argument("RVNPU Div requires lhs to match output shape");
+  Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
+  self.context_->RunDiv(lhs.GetTensorData<float>(), rhs.GetTensorData<float>(),
+                        output.GetTensorMutableData<float>(), shape);
+  return nullptr;
+  RVNPU_EXCEPTION_GUARD_END
+}
+
+void ORT_API_CALL DivKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
+  delete static_cast<DivKernel *>(kernel);
 }
 
 SigmoidKernel::SigmoidKernel(const OrtKernelInfo *info, DeviceContext *context)

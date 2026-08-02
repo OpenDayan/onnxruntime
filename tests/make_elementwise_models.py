@@ -21,9 +21,7 @@ def make_case(directory: Path, op: str, shapes: list[list[int]]) -> None:
         for name, shape in zip(names, shapes)
     ]
     arrays = [values(shape, index + 1) for index, shape in enumerate(shapes)]
-    if op == "Add":
-        output_shape = list(np.broadcast_shapes(*[array.shape for array in arrays]))
-    elif op == "Mul":
+    if op in {"Add", "Mul", "Sub", "Div"}:
         output_shape = list(np.broadcast_shapes(*[array.shape for array in arrays]))
     else:
         output_shape = shapes[0]
@@ -46,7 +44,9 @@ def make_case(directory: Path, op: str, shapes: list[list[int]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--op", choices=["add", "mul", "sigmoid"], required=True)
+    parser.add_argument(
+        "--op", choices=["add", "mul", "sub", "div", "sigmoid"], required=True
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
@@ -57,6 +57,18 @@ def main() -> None:
             args.output_dir / "supported",
             "Mul",
             [[1, 3, 1, 1], [1, 3, 4, 5]],
+        )
+    elif args.op == "sub":
+        make_case(
+            args.output_dir / "supported",
+            "Sub",
+            [[1, 2, 16], [1, 2, 16]],
+        )
+    elif args.op == "div":
+        make_case(
+            args.output_dir / "supported",
+            "Div",
+            [[1, 2, 16], [1]],
         )
     else:
         make_case(args.output_dir / "supported", "Sigmoid", [[2, 3, 5]])

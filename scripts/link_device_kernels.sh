@@ -81,7 +81,13 @@ kernel_sources=(
   kernel_elementwise.cpp
   kernel_silu.cpp
   kernel_sigmoid.cpp
-  kernel_conv.cpp
+  kernel_concat.cpp
+  kernel_split.cpp
+  kernel_slice.cpp
+  kernel_resize.cpp
+  kernel_transpose.cpp
+  kernel_softmax.cpp
+  kernel_im2col.cpp
   kernel_maxpool.cpp
   kernel_topk.cpp
   kernel_nms.cpp

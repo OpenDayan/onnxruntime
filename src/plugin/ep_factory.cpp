@@ -3,6 +3,7 @@
 #include <charconv>
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 #include "plugin/ep.h"
 
@@ -21,6 +22,22 @@ uint32_t ParseDeviceId(const std::string &text) {
         "RVNPU option device_id must be an unsigned integer");
   }
   return value;
+}
+
+std::unordered_set<std::string> ParseEnabledOps(const std::string &text) {
+  std::unordered_set<std::string> result;
+  size_t begin = 0;
+  while (begin < text.size()) {
+    const size_t end = text.find(',', begin);
+    const std::string name = text.substr(begin, end - begin);
+    if (name.empty())
+      throw std::invalid_argument("RVNPU option enabled_ops contains an empty name");
+    result.insert(name);
+    if (end == std::string::npos)
+      break;
+    begin = end + 1;
+  }
+  return result;
 }
 } // namespace
 
@@ -149,6 +166,8 @@ OrtStatus *ORT_API_CALL RvnpuEpFactory::CreateEpImpl(
       *session_options, std::string(kOptionPrefix) + "device_mode", "emulator");
   config.device_id = ParseDeviceId(GetSessionOption(
       *session_options, std::string(kOptionPrefix) + "device_id", "0"));
+  config.enabled_ops = ParseEnabledOps(GetSessionOption(
+      *session_options, std::string(kOptionPrefix) + "enabled_ops", ""));
   if (config.kernel_elf.empty()) {
     return factory.api_.CreateStatus(ORT_INVALID_ARGUMENT,
                                      "RVNPU EP option kernel_elf is required");

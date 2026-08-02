@@ -1,5 +1,6 @@
 #include "runtime/device_context.h"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -109,20 +110,21 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   device_a.CopyFromHost(a, a_bytes);
   device_b.CopyFromHost(b, b_bytes);
 
-  const std::string details =
-      " M=" + std::to_string(shape.m) + " N=" + std::to_string(shape.n) +
-      " K=" + std::to_string(shape.k);
+  const std::string details = " M=" + std::to_string(shape.m) +
+                              " N=" + std::to_string(shape.n) +
+                              " K=" + std::to_string(shape.k);
   LaunchKernelLocked("RVNPU MatMul", kernels::kMatMulFp32, details,
-                     device_a.address(), device_b.address(),
-                     device_y.address(), shape.m, shape.n, shape.k, shape.k,
-                     1, shape.n, 1, shape.n, 1);
+                     device_a.address(), device_b.address(), device_y.address(),
+                     shape.m, shape.n, shape.k, shape.k, 1, shape.n, 1, shape.n,
+                     1);
   device_y.CopyToHost(y, y_bytes);
-
 }
 
-void DeviceContext::RunBinaryElementwise(
-    const char *operator_name, const char *kernel_name, const float *lhs,
-    const float *rhs, float *output, const BinaryElementwiseShape &shape) {
+void DeviceContext::RunBinaryElementwise(const char *operator_name,
+                                         const char *kernel_name,
+                                         const float *lhs, const float *rhs,
+                                         float *output,
+                                         const BinaryElementwiseShape &shape) {
   if (lhs == nullptr || rhs == nullptr || output == nullptr) {
     throw std::invalid_argument(std::string(operator_name) +
                                 " received a null tensor pointer");
@@ -152,19 +154,157 @@ void DeviceContext::RunBinaryElementwise(
                      device_b.address(), device_output.address(), a[0], a[1],
                      a[2], a[3], b[0], b[1], b[2], b[3]);
   device_output.CopyToHost(output, output_bytes);
-
 }
 
 void DeviceContext::RunAdd(const float *lhs, const float *rhs, float *output,
                            const BinaryElementwiseShape &shape) {
-  RunBinaryElementwise("RVNPU Add", kernels::kAddFp32, lhs, rhs, output,
-                       shape);
+  RunBinaryElementwise("RVNPU Add", kernels::kAddFp32, lhs, rhs, output, shape);
 }
 
 void DeviceContext::RunMul(const float *lhs, const float *rhs, float *output,
                            const BinaryElementwiseShape &shape) {
-  RunBinaryElementwise("RVNPU Mul", kernels::kMulFp32, lhs, rhs, output,
-                       shape);
+  RunBinaryElementwise("RVNPU Mul", kernels::kMulFp32, lhs, rhs, output, shape);
+}
+
+void DeviceContext::RunSub(const float *lhs, const float *rhs, float *output,
+                           const BinaryElementwiseShape &shape) {
+  if (shape.swap_inputs) {
+    throw std::invalid_argument("RVNPU Sub cannot swap broadcast inputs");
+  }
+  RunBinaryElementwise("RVNPU Sub", kernels::kSubFp32, lhs, rhs, output, shape);
+}
+
+void DeviceContext::RunDiv(const float *lhs, const float *rhs, float *output,
+                           const BinaryElementwiseShape &shape) {
+  if (shape.swap_inputs) {
+    throw std::invalid_argument("RVNPU Div cannot swap broadcast inputs");
+  }
+  RunBinaryElementwise("RVNPU Div", kernels::kDivFp32, lhs, rhs, output, shape);
+}
+
+void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
+                              float *output, const ConcatShape &shape) {
+  if (inputs.size() != shape.input_axes.size() || output == nullptr ||
+      std::any_of(inputs.begin(), inputs.end(),
+                  [](const float *input) { return input == nullptr; })) {
+    throw std::invalid_argument(
+        "RVNPU Concat received invalid tensor pointers");
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t output_bytes = shape.output_elements * sizeof(float);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  int32_t axis_offset = 0;
+  for (size_t index = 0; index < inputs.size(); ++index) {
+    const size_t elements = static_cast<size_t>(shape.outer) *
+                            static_cast<size_t>(shape.input_axes[index]) *
+                            static_cast<size_t>(shape.inner);
+    const size_t bytes = elements * sizeof(float);
+    DeviceBuffer device_input(runtime_, bytes);
+    device_input.CopyFromHost(inputs[index], bytes);
+    LaunchKernelLocked(
+        "RVNPU Concat", kernels::kConcatFp32, " input=" + std::to_string(index),
+        device_input.address(), device_output.address(), shape.outer,
+        shape.input_axes[index], shape.output_axis, shape.inner, axis_offset);
+    axis_offset += shape.input_axes[index];
+  }
+  device_output.CopyToHost(output, output_bytes);
+}
+
+void DeviceContext::RunSplit(const float *input,
+                             const std::vector<float *> &outputs,
+                             const SplitShape &shape) {
+  if (input == nullptr || outputs.size() != shape.output_axes.size() ||
+      std::any_of(outputs.begin(), outputs.end(),
+                  [](const float *output) { return output == nullptr; })) {
+    throw std::invalid_argument("RVNPU Split received invalid tensor pointers");
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  int32_t axis_offset = 0;
+  for (size_t index = 0; index < outputs.size(); ++index) {
+    const size_t elements = static_cast<size_t>(shape.outer) *
+                            static_cast<size_t>(shape.output_axes[index]) *
+                            static_cast<size_t>(shape.inner);
+    const size_t bytes = elements * sizeof(float);
+    DeviceBuffer device_output(runtime_, bytes);
+    LaunchKernelLocked(
+        "RVNPU Split", kernels::kSplitFp32, " output=" + std::to_string(index),
+        device_input.address(), device_output.address(), shape.outer,
+        shape.input_axis, shape.output_axes[index], shape.inner, axis_offset);
+    device_output.CopyToHost(outputs[index], bytes);
+    axis_offset += shape.output_axes[index];
+  }
+}
+
+void DeviceContext::RunSlice(const float *input, float *output,
+                             const SliceShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU Slice received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  const size_t output_bytes = shape.output_elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  LaunchKernelLocked("RVNPU Slice", kernels::kSliceFp32,
+                     " length=" + std::to_string(shape.length),
+                     device_input.address(), device_output.address(),
+                     shape.outer, shape.input_axis, shape.start, shape.length,
+                     shape.inner);
+  device_output.CopyToHost(output, output_bytes);
+}
+
+void DeviceContext::RunResize(const float *input, float *output,
+                              const ResizeShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU Resize received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  const size_t output_bytes = shape.output_elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  LaunchKernelLocked("RVNPU Resize", kernels::kResizeNearestNchwFp32,
+                     " output=" + std::to_string(shape.output_h) + "x" +
+                         std::to_string(shape.output_w),
+                     device_input.address(), device_output.address(),
+                     shape.batch, shape.channels, shape.input_h, shape.input_w,
+                     shape.output_h, shape.output_w);
+  device_output.CopyToHost(output, output_bytes);
+}
+
+void DeviceContext::RunTranspose(const float *input, float *output,
+                                 const TransposeShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument(
+        "RVNPU Transpose received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t bytes = shape.elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, bytes);
+  DeviceBuffer device_output(runtime_, bytes);
+  device_input.CopyFromHost(input, bytes);
+  LaunchKernelLocked("RVNPU Transpose", kernels::kTranspose0213Fp32, "",
+                     device_input.address(), device_output.address(),
+                     shape.dims[0], shape.dims[1], shape.dims[2],
+                     shape.dims[3]);
+  device_output.CopyToHost(output, bytes);
+}
+
+void DeviceContext::RunSoftmax(const float *input, float *output,
+                               const SoftmaxShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU Softmax received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t bytes = shape.elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, bytes);
+  DeviceBuffer device_output(runtime_, bytes);
+  device_input.CopyFromHost(input, bytes);
+  LaunchKernelLocked("RVNPU Softmax", kernels::kSoftmaxAxis1Fp32, " axis=1",
+                     device_input.address(), device_output.address(),
+                     shape.outer, shape.axis, shape.inner);
+  device_output.CopyToHost(output, bytes);
 }
 
 void DeviceContext::RunSigmoid(const float *input, float *output,
@@ -184,7 +324,6 @@ void DeviceContext::RunSigmoid(const float *input, float *output,
                      device_input.address(), device_output.address(), dims[3],
                      dims[2], dims[1], dims[0]);
   device_output.CopyToHost(output, bytes);
-
 }
 
 void DeviceContext::RunConv(const float *input, const float *weight,
@@ -201,11 +340,10 @@ void DeviceContext::RunConv(const float *input, const float *weight,
   const size_t column_bytes = shape.column_elements * sizeof(float);
   const size_t output_bytes = shape.output_elements * sizeof(float);
   std::vector<float> transposed_weight(shape.weight_elements);
-  for (int32_t output_channel = 0;
-       output_channel < shape.output_channels; ++output_channel) {
+  for (int32_t output_channel = 0; output_channel < shape.output_channels;
+       ++output_channel) {
     for (int32_t reduction = 0; reduction < shape.matmul_k; ++reduction) {
-      transposed_weight[static_cast<size_t>(reduction) *
-                            shape.output_channels +
+      transposed_weight[static_cast<size_t>(reduction) * shape.output_channels +
                         output_channel] =
           weight[static_cast<size_t>(output_channel) * shape.matmul_k +
                  reduction];
@@ -218,35 +356,33 @@ void DeviceContext::RunConv(const float *input, const float *weight,
   device_input.CopyFromHost(input, input_bytes);
   device_weight.CopyFromHost(transposed_weight.data(), weight_bytes);
 
-  const std::string details =
-      " N=1 C=" + std::to_string(shape.input_channels) +
-      " H=" + std::to_string(shape.input_h) +
-      " W=" + std::to_string(shape.input_w) +
-      " M=" + std::to_string(shape.output_channels) +
-      " KH=" + std::to_string(shape.kernel_h) +
-      " KW=" + std::to_string(shape.kernel_w);
-  LaunchKernelLocked(
-      "RVNPU Conv im2col", kernels::kIm2ColNchwFp32, details,
-      device_input.address(), device_columns.address(), shape.input_channels,
-      shape.input_h, shape.input_w, shape.output_h, shape.output_w,
-      shape.kernel_h, shape.kernel_w, shape.stride_h, shape.stride_w,
-      shape.pad_h, shape.pad_w);
-  LaunchKernelLocked(
-      "RVNPU Conv MatMul", kernels::kMatMulFp32, details,
-      device_columns.address(), device_weight.address(),
-      device_output.address(), shape.matmul_m, shape.matmul_n,
-      shape.matmul_k, shape.matmul_k, 1, shape.matmul_n, 1, 1,
-      shape.matmul_m);
+  const std::string details = " N=1 C=" + std::to_string(shape.input_channels) +
+                              " H=" + std::to_string(shape.input_h) +
+                              " W=" + std::to_string(shape.input_w) +
+                              " M=" + std::to_string(shape.output_channels) +
+                              " KH=" + std::to_string(shape.kernel_h) +
+                              " KW=" + std::to_string(shape.kernel_w);
+  LaunchKernelLocked("RVNPU Conv im2col", kernels::kIm2ColNchwFp32, details,
+                     device_input.address(), device_columns.address(),
+                     shape.input_channels, shape.input_h, shape.input_w,
+                     shape.output_h, shape.output_w, shape.kernel_h,
+                     shape.kernel_w, shape.stride_h, shape.stride_w,
+                     shape.pad_h, shape.pad_w);
+  LaunchKernelLocked("RVNPU Conv MatMul", kernels::kMatMulFp32, details,
+                     device_columns.address(), device_weight.address(),
+                     device_output.address(), shape.matmul_m, shape.matmul_n,
+                     shape.matmul_k, shape.matmul_k, 1, shape.matmul_n, 1, 1,
+                     shape.matmul_m);
 
   if (shape.has_bias) {
     const size_t bias_bytes = shape.bias_elements * sizeof(float);
     DeviceBuffer device_bias(runtime_, bias_bytes);
     device_bias.CopyFromHost(bias, bias_bytes);
-    LaunchKernelLocked(
-        "RVNPU Conv bias", kernels::kAddFp32, details,
-        device_output.address(), device_bias.address(),
-        device_output.address(), shape.output_w, shape.output_h,
-        shape.output_channels, 1, 1, 1, shape.output_channels, 1);
+    LaunchKernelLocked("RVNPU Conv bias", kernels::kAddFp32, details,
+                       device_output.address(), device_bias.address(),
+                       device_output.address(), shape.output_w, shape.output_h,
+                       shape.output_channels, 1, 1, 1, shape.output_channels,
+                       1);
   }
 
   device_output.CopyToHost(output, output_bytes);
@@ -255,8 +391,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
 void DeviceContext::RunMaxPool(const float *input, float *output,
                                const MaxPoolShape &shape) {
   if (input == nullptr || output == nullptr) {
-    throw std::invalid_argument(
-        "RVNPU MaxPool received a null tensor pointer");
+    throw std::invalid_argument("RVNPU MaxPool received a null tensor pointer");
   }
   std::lock_guard<std::mutex> lock(mutex_);
   const size_t input_bytes = shape.input_elements * sizeof(float);
@@ -265,25 +400,23 @@ void DeviceContext::RunMaxPool(const float *input, float *output,
   DeviceBuffer device_output(runtime_, output_bytes);
   device_input.CopyFromHost(input, input_bytes);
 
-  const std::string details =
-      " N=" + std::to_string(shape.batch) +
-      " C=" + std::to_string(shape.channels) +
-      " H=" + std::to_string(shape.input_h) +
-      " W=" + std::to_string(shape.input_w) +
-      " KH=" + std::to_string(shape.kernel_h) +
-      " KW=" + std::to_string(shape.kernel_w);
-  LaunchKernelLocked(
-      "RVNPU MaxPool", kernels::kMaxPool2dNchwFp32, details,
-      device_input.address(), device_output.address(), shape.batch,
-      shape.channels, shape.input_h, shape.input_w, shape.output_h,
-      shape.output_w, shape.kernel_h, shape.kernel_w, shape.stride_h,
-      shape.stride_w, shape.pad_h, shape.pad_w);
+  const std::string details = " N=" + std::to_string(shape.batch) +
+                              " C=" + std::to_string(shape.channels) +
+                              " H=" + std::to_string(shape.input_h) +
+                              " W=" + std::to_string(shape.input_w) +
+                              " KH=" + std::to_string(shape.kernel_h) +
+                              " KW=" + std::to_string(shape.kernel_w);
+  LaunchKernelLocked("RVNPU MaxPool", kernels::kMaxPool2dNchwFp32, details,
+                     device_input.address(), device_output.address(),
+                     shape.batch, shape.channels, shape.input_h, shape.input_w,
+                     shape.output_h, shape.output_w, shape.kernel_h,
+                     shape.kernel_w, shape.stride_h, shape.stride_w,
+                     shape.pad_h, shape.pad_w);
   device_output.CopyToHost(output, output_bytes);
-
 }
 
-void DeviceContext::RunTopK(const float *input, float *values,
-                            int64_t *indices, const TopKShape &shape) {
+void DeviceContext::RunTopK(const float *input, float *values, int64_t *indices,
+                            const TopKShape &shape) {
   if (input == nullptr || values == nullptr || indices == nullptr) {
     throw std::invalid_argument("RVNPU TopK received a null tensor pointer");
   }
@@ -296,10 +429,9 @@ void DeviceContext::RunTopK(const float *input, float *values,
   DeviceBuffer device_indices(runtime_, indices_bytes);
   device_input.CopyFromHost(input, input_bytes);
 
-  const std::string details =
-      " rows=" + std::to_string(shape.rows) +
-      " columns=" + std::to_string(shape.columns) +
-      " K=" + std::to_string(shape.k);
+  const std::string details = " rows=" + std::to_string(shape.rows) +
+                              " columns=" + std::to_string(shape.columns) +
+                              " K=" + std::to_string(shape.k);
   LaunchKernelLocked("RVNPU TopK", kernels::kTopKLastDimFp32, details,
                      device_input.address(), device_values.address(),
                      device_indices.address(), shape.rows, shape.columns,
@@ -308,10 +440,11 @@ void DeviceContext::RunTopK(const float *input, float *values,
   device_indices.CopyToHost(indices, indices_bytes);
 }
 
-std::vector<int64_t>
-DeviceContext::RunNms(const float *boxes, const float *scores,
-                      float iou_threshold, float score_threshold,
-                      const NmsShape &shape) {
+std::vector<int64_t> DeviceContext::RunNms(const float *boxes,
+                                           const float *scores,
+                                           float iou_threshold,
+                                           float score_threshold,
+                                           const NmsShape &shape) {
   if (boxes == nullptr || scores == nullptr) {
     throw std::invalid_argument("RVNPU NMS received a null tensor pointer");
   }
@@ -344,11 +477,11 @@ DeviceContext::RunNms(const float *boxes, const float *scores,
     std::memcpy(&bits, &score_threshold, sizeof(bits));
     return bits;
   }();
-  LaunchKernelLocked(
-      "RVNPU NonMaxSuppression", kernels::kNonMaxSuppressionFp32, details,
-      device_boxes.address(), device_scores.address(), device_output.address(),
-      device_count.address(), shape.num_boxes, shape.num_classes,
-      shape.max_output_per_class, iou_bits, score_bits);
+  LaunchKernelLocked("RVNPU NonMaxSuppression", kernels::kNonMaxSuppressionFp32,
+                     details, device_boxes.address(), device_scores.address(),
+                     device_output.address(), device_count.address(),
+                     shape.num_boxes, shape.num_classes,
+                     shape.max_output_per_class, iou_bits, score_bits);
 
   uint64_t selected = 0;
   device_count.CopyToHost(&selected, sizeof(selected));

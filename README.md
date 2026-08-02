@@ -5,19 +5,20 @@
 当前支持标准 ONNX 算子：
 
 ```text
-MatMul, Add, Mul, Sigmoid, Conv, MaxPool, TopK, NonMaxSuppression
+MatMul, Add, Mul, Sub, Div, Sigmoid, Conv, MaxPool,
+Concat, Split, Slice, Resize, Transpose, Softmax, TopK, NonMaxSuppression
 ```
 
-YOLOv8n 中满足首版约束的 `Conv/Add/Mul/Sigmoid/MaxPool` 由 RVNPU 执行，数据整理节点由 CPU EP 执行。
+当前 YOLOv8n 的 FP32 计算节点和数据整理节点均具备 RVNPU 接管实现。`Constant`、`Shape`、`Gather`、`Reshape` 以及 4 个 INT64 形状计算节点留给 ORT 处理。
 
 ## 1. 准备开发环境
 
 项目在 RVNPU Linux 开发容器中构建。当前开发分支和默认目录如下：
 
 ```text
-/workspace/onnxruntime-rvnpu   codex/yolov8n-core-ops
+/workspace/onnxruntime-rvnpu   rvtv2/yolov8n-ops
 /workspace/RVNPU-compiler      rvtv2/dev
-/workspace/npu-kernels         codex/yolov8n-kernels
+/workspace/npu-kernels         rvtv2/onnx-kernel-opt
 /workspace/npu-runtime         rvtv2/stable
 /workspace/npu-firmware        rvtv2/stable
 /workspace/npu-qemu            rvtv2/stable
@@ -86,9 +87,17 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh matmul
 ./scripts/test_operator.sh add
 ./scripts/test_operator.sh mul
+./scripts/test_operator.sh sub
+./scripts/test_operator.sh div
 ./scripts/test_operator.sh sigmoid
 ./scripts/test_operator.sh conv
 ./scripts/test_operator.sh maxpool
+./scripts/test_operator.sh concat
+./scripts/test_operator.sh split
+./scripts/test_operator.sh slice
+./scripts/test_operator.sh resize
+./scripts/test_operator.sh transpose
+./scripts/test_operator.sh softmax
 ./scripts/test_operator.sh topk
 ./scripts/test_operator.sh nms
 ```
@@ -110,5 +119,11 @@ python3 -m pip install --user ultralytics==8.4.92
 ```
 
 模型为 opset 13、FP32、静态 `[1,3,640,640]`，不包含 NMS。脚本会在内部检查实际 EP assignment，并分别运行一次 CPU 和 RVNPU。
+
+只验证 YOLO 中某一个 RVNPU 算子时：
+
+```bash
+RVNPU_YOLO_OPERATOR=Softmax ./scripts/test_operator.sh yolov8n
+```
 
 所有模型、SDK、ELF 和日志均生成在被忽略的 `build/` 中。

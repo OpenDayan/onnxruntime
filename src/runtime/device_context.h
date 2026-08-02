@@ -28,12 +28,24 @@ public:
               const BinaryElementwiseShape &shape);
   void RunMul(const float *lhs, const float *rhs, float *output,
               const BinaryElementwiseShape &shape);
+  void RunSub(const float *lhs, const float *rhs, float *output,
+              const BinaryElementwiseShape &shape);
+  void RunDiv(const float *lhs, const float *rhs, float *output,
+              const BinaryElementwiseShape &shape);
+  void RunConcat(const std::vector<const float *> &inputs, float *output,
+                 const ConcatShape &shape);
+  void RunSplit(const float *input, const std::vector<float *> &outputs,
+                const SplitShape &shape);
+  void RunSlice(const float *input, float *output, const SliceShape &shape);
+  void RunResize(const float *input, float *output, const ResizeShape &shape);
+  void RunTranspose(const float *input, float *output,
+                    const TransposeShape &shape);
+  void RunSoftmax(const float *input, float *output, const SoftmaxShape &shape);
   void RunSigmoid(const float *input, float *output,
                   const UnaryTensorShape &shape);
   void RunConv(const float *input, const float *weight, const float *bias,
                float *output, const ConvShape &shape);
-  void RunMaxPool(const float *input, float *output,
-                  const MaxPoolShape &shape);
+  void RunMaxPool(const float *input, float *output, const MaxPoolShape &shape);
   void RunTopK(const float *input, float *values, int64_t *indices,
                const TopKShape &shape);
   std::vector<int64_t> RunNms(const float *boxes, const float *scores,
@@ -59,15 +71,13 @@ private:
         static_cast<uint64_t>(args)...);
     if (runtime_result != NPU_SUCCESS) {
       throw std::runtime_error(
-          std::string(operator_name) + " launch failed: kernel=" +
-          kernel_name + details +
-          " runtime code=" + std::to_string(runtime_result));
+          std::string(operator_name) + " launch failed: kernel=" + kernel_name +
+          details + " runtime code=" + std::to_string(runtime_result));
     }
     if (kernel_result != 0) {
       throw std::runtime_error(std::string(operator_name) +
                                " device kernel=" + kernel_name + details +
-                               " returned " +
-                               std::to_string(kernel_result));
+                               " returned " + std::to_string(kernel_result));
     }
   }
 

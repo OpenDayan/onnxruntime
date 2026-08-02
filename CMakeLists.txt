@@ -45,12 +45,19 @@ add_library(rvnpu_ep SHARED
   src/plugin/ep.cpp
   src/plugin/memory.cpp
   src/plugin/kernel_registry.cpp
+  src/ops/concat/concat.cpp
   src/ops/conv/conv.cpp
   src/ops/elementwise/elementwise.cpp
   src/ops/matmul/matmul.cpp
   src/ops/maxpool/maxpool.cpp
   src/ops/topk/topk.cpp
   src/ops/nms/nms.cpp)
+target_sources(rvnpu_ep PRIVATE
+  src/ops/resize/resize.cpp
+  src/ops/slice/slice.cpp
+  src/ops/softmax/softmax.cpp
+  src/ops/split/split.cpp
+  src/ops/transpose/transpose.cpp)
 target_include_directories(rvnpu_ep PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(rvnpu_ep PRIVATE rvnpu_runtime_bridge "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(rvnpu_ep PROPERTIES
@@ -80,6 +87,14 @@ target_link_libraries(test_rvnpu_matmul PRIVATE rvnpu_runtime_bridge)
 add_executable(test_rvnpu_elementwise tools/test_rvnpu_elementwise.cpp)
 target_include_directories(test_rvnpu_elementwise PRIVATE src)
 target_link_libraries(test_rvnpu_elementwise PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_tensor_copy tools/test_rvnpu_tensor_copy.cpp)
+target_include_directories(test_rvnpu_tensor_copy PRIVATE src)
+target_link_libraries(test_rvnpu_tensor_copy PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_transform tools/test_rvnpu_transform.cpp)
+target_include_directories(test_rvnpu_transform PRIVATE src)
+target_link_libraries(test_rvnpu_transform PRIVATE rvnpu_runtime_bridge)
 
 add_executable(test_rvnpu_conv_maxpool tools/test_rvnpu_conv_maxpool.cpp)
 target_include_directories(test_rvnpu_conv_maxpool PRIVATE src)

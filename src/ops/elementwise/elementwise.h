@@ -33,6 +33,34 @@ private:
   DeviceContext *context_{};
 };
 
+class SubKernel final : public OrtKernelImpl {
+public:
+  SubKernel(const OrtKernelInfo *info, DeviceContext *context);
+  static OrtStatus *Create(const OrtKernelInfo *, void *,
+                           OrtKernelImpl *&) noexcept;
+
+private:
+  static OrtStatus *ORT_API_CALL ComputeImpl(OrtKernelImpl *,
+                                              OrtKernelContext *) noexcept;
+  static void ORT_API_CALL ReleaseImpl(OrtKernelImpl *) noexcept;
+  const OrtKernelInfo *info_{};
+  DeviceContext *context_{};
+};
+
+class DivKernel final : public OrtKernelImpl {
+public:
+  DivKernel(const OrtKernelInfo *info, DeviceContext *context);
+  static OrtStatus *Create(const OrtKernelInfo *, void *,
+                           OrtKernelImpl *&) noexcept;
+
+private:
+  static OrtStatus *ORT_API_CALL ComputeImpl(OrtKernelImpl *,
+                                              OrtKernelContext *) noexcept;
+  static void ORT_API_CALL ReleaseImpl(OrtKernelImpl *) noexcept;
+  const OrtKernelInfo *info_{};
+  DeviceContext *context_{};
+};
+
 class SigmoidKernel final : public OrtKernelImpl {
 public:
   SigmoidKernel(const OrtKernelInfo *info, DeviceContext *context);

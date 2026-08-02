@@ -37,6 +37,61 @@ struct BinaryElementwiseShape {
   bool swap_inputs{};
 };
 
+struct ConcatShape {
+  std::vector<int64_t> output_shape;
+  std::vector<int32_t> input_axes;
+  int32_t outer{};
+  int32_t output_axis{};
+  int32_t inner{};
+  size_t output_elements{};
+};
+
+struct SplitShape {
+  std::vector<std::vector<int64_t>> output_shapes;
+  std::vector<int32_t> output_axes;
+  int32_t outer{};
+  int32_t input_axis{};
+  int32_t inner{};
+  size_t input_elements{};
+};
+
+struct SliceShape {
+  std::vector<int64_t> output_shape;
+  int32_t outer{};
+  int32_t input_axis{};
+  int32_t start{};
+  int32_t length{};
+  int32_t inner{};
+  size_t input_elements{};
+  size_t output_elements{};
+};
+
+struct ResizeShape {
+  std::vector<int64_t> output_shape;
+  int32_t batch{};
+  int32_t channels{};
+  int32_t input_h{};
+  int32_t input_w{};
+  int32_t output_h{};
+  int32_t output_w{};
+  size_t input_elements{};
+  size_t output_elements{};
+};
+
+struct TransposeShape {
+  std::vector<int64_t> output_shape;
+  std::array<int32_t, 4> dims{};
+  size_t elements{};
+};
+
+struct SoftmaxShape {
+  std::vector<int64_t> output_shape;
+  int32_t outer{};
+  int32_t axis{};
+  int32_t inner{};
+  size_t elements{};
+};
+
 struct ConvAttributes {
   std::vector<int64_t> dilations{1, 1};
   std::vector<int64_t> kernel_shape;
@@ -151,6 +206,179 @@ inline int32_t CheckedSizeDimension(size_t value, const char *label) {
   return static_cast<int32_t>(value);
 }
 
+inline size_t ShapeProduct(const std::vector<int64_t> &shape, size_t begin,
+                           size_t end, const char *label) {
+  size_t result = 1;
+  for (size_t index = begin; index < end; ++index) {
+    result = CheckedMultiply(result,
+                             static_cast<size_t>(CheckedDimension(shape[index],
+                                                                  label)),
+                             label);
+  }
+  return result;
+}
+
+inline size_t NormalizeAxis(int64_t axis, size_t rank, const char *label) {
+  if (rank == 0)
+    throw std::invalid_argument(std::string(label) + " requires rank >= 1");
+  const int64_t normalized = axis < 0 ? axis + static_cast<int64_t>(rank) : axis;
+  if (normalized < 0 || normalized >= static_cast<int64_t>(rank))
+    throw std::invalid_argument(std::string(label) + " axis is invalid");
+  return static_cast<size_t>(normalized);
+}
+
+inline ConcatShape
+ValidateConcatShapes(const std::vector<std::vector<int64_t>> &inputs,
+                     int64_t axis) {
+  if (inputs.size() < 2 || inputs[0].empty() || inputs[0].size() > 4)
+    throw std::invalid_argument("RVNPU Concat requires 2 or more rank-1..4 inputs");
+  const size_t rank = inputs[0].size();
+  const size_t normalized_axis = NormalizeAxis(axis, rank, "Concat");
+  ConcatShape result;
+  result.output_shape = inputs[0];
+  result.output_shape[normalized_axis] = 0;
+  for (const auto &input : inputs) {
+    if (input.size() != rank)
+      throw std::invalid_argument("RVNPU Concat input ranks do not match");
+    for (size_t dimension = 0; dimension < rank; ++dimension) {
+      CheckedDimension(input[dimension], "Concat");
+      if (dimension != normalized_axis &&
+          input[dimension] != inputs[0][dimension]) {
+        throw std::invalid_argument("RVNPU Concat non-axis dimensions differ");
+      }
+    }
+    result.input_axes.push_back(
+        CheckedDimension(input[normalized_axis], "Concat axis"));
+    result.output_shape[normalized_axis] += input[normalized_axis];
+  }
+  result.outer = CheckedSizeDimension(
+      ShapeProduct(inputs[0], 0, normalized_axis, "Concat outer"),
+      "Concat outer");
+  result.inner = CheckedSizeDimension(
+      ShapeProduct(inputs[0], normalized_axis + 1, rank, "Concat inner"),
+      "Concat inner");
+  result.output_axis =
+      CheckedDimension(result.output_shape[normalized_axis], "Concat axis");
+  result.output_elements = ShapeProduct(result.output_shape, 0, rank,
+                                        "Concat output");
+  return result;
+}
+
+inline SplitShape ValidateSplitShape(const std::vector<int64_t> &input,
+                                     const std::vector<int64_t> &splits,
+                                     int64_t axis, size_t output_count) {
+  if (input.empty() || input.size() > 4 || output_count < 2 ||
+      splits.size() != output_count) {
+    throw std::invalid_argument("RVNPU Split requires rank-1..4 and explicit splits");
+  }
+  const size_t normalized_axis = NormalizeAxis(axis, input.size(), "Split");
+  const int32_t input_axis = CheckedDimension(input[normalized_axis], "Split axis");
+  int64_t total = 0;
+  SplitShape result;
+  for (const int64_t split : splits) {
+    const int32_t part = CheckedDimension(split, "Split part");
+    total += part;
+    result.output_axes.push_back(part);
+    auto output = input;
+    output[normalized_axis] = part;
+    result.output_shapes.push_back(std::move(output));
+  }
+  if (total != input_axis)
+    throw std::invalid_argument("RVNPU Split sizes do not cover the axis");
+  result.outer = CheckedSizeDimension(
+      ShapeProduct(input, 0, normalized_axis, "Split outer"), "Split outer");
+  result.inner = CheckedSizeDimension(
+      ShapeProduct(input, normalized_axis + 1, input.size(), "Split inner"),
+      "Split inner");
+  result.input_axis = input_axis;
+  result.input_elements = ShapeProduct(input, 0, input.size(), "Split input");
+  return result;
+}
+
+inline SliceShape ValidateSliceShape(const std::vector<int64_t> &input,
+                                     int64_t start, int64_t end, int64_t axis,
+                                     int64_t step) {
+  if (input.empty() || input.size() > 4 || step != 1)
+    throw std::invalid_argument("RVNPU Slice requires rank-1..4 and step=1");
+  const size_t normalized_axis = NormalizeAxis(axis, input.size(), "Slice");
+  const int64_t dimension = CheckedDimension(input[normalized_axis], "Slice axis");
+  int64_t normalized_start = start < 0 ? std::max<int64_t>(0, start + dimension)
+                                       : std::min(start, dimension);
+  int64_t normalized_end = end < 0 ? std::max<int64_t>(0, end + dimension)
+                                   : std::min(end, dimension);
+  if (normalized_end <= normalized_start)
+    throw std::invalid_argument("RVNPU Slice requires a non-empty range");
+  SliceShape result;
+  result.output_shape = input;
+  result.start = static_cast<int32_t>(normalized_start);
+  result.length = static_cast<int32_t>(normalized_end - normalized_start);
+  result.output_shape[normalized_axis] = result.length;
+  result.outer = CheckedSizeDimension(
+      ShapeProduct(input, 0, normalized_axis, "Slice outer"), "Slice outer");
+  result.inner = CheckedSizeDimension(
+      ShapeProduct(input, normalized_axis + 1, input.size(), "Slice inner"),
+      "Slice inner");
+  result.input_axis = static_cast<int32_t>(dimension);
+  result.input_elements = ShapeProduct(input, 0, input.size(), "Slice input");
+  result.output_elements =
+      ShapeProduct(result.output_shape, 0, input.size(), "Slice output");
+  return result;
+}
+
+inline ResizeShape
+ValidateResizeShape(const std::vector<int64_t> &input,
+                    const std::vector<int64_t> &output) {
+  if (input.size() != 4 || output.size() != 4 || input[0] != output[0] ||
+      input[1] != output[1])
+    throw std::invalid_argument("RVNPU Resize requires NCHW with unchanged N/C");
+  ResizeShape result;
+  result.output_shape = output;
+  result.batch = CheckedDimension(input[0], "Resize N");
+  result.channels = CheckedDimension(input[1], "Resize C");
+  result.input_h = CheckedDimension(input[2], "Resize H");
+  result.input_w = CheckedDimension(input[3], "Resize W");
+  result.output_h = CheckedDimension(output[2], "Resize output H");
+  result.output_w = CheckedDimension(output[3], "Resize output W");
+  if (result.output_h < result.input_h || result.output_w < result.input_w ||
+      result.output_h % result.input_h != 0 ||
+      result.output_w % result.input_w != 0)
+    throw std::invalid_argument("RVNPU Resize requires integer upscaling");
+  result.input_elements = ShapeProduct(input, 0, input.size(), "Resize input");
+  result.output_elements =
+      ShapeProduct(output, 0, output.size(), "Resize output");
+  return result;
+}
+
+inline TransposeShape
+ValidateTranspose0213Shape(const std::vector<int64_t> &input,
+                           const std::vector<int64_t> &perm) {
+  if (input.size() != 4 || perm != std::vector<int64_t>({0, 2, 1, 3}))
+    throw std::invalid_argument("RVNPU Transpose only supports perm [0,2,1,3]");
+  TransposeShape result;
+  for (size_t index = 0; index < 4; ++index)
+    result.dims[index] = CheckedDimension(input[index], "Transpose");
+  result.output_shape = {input[0], input[2], input[1], input[3]};
+  result.elements = ShapeProduct(input, 0, input.size(), "Transpose");
+  return result;
+}
+
+inline SoftmaxShape ValidateSoftmaxAxis1Shape(
+    const std::vector<int64_t> &input, int64_t axis) {
+  if (input.size() != 4 || NormalizeAxis(axis, input.size(), "Softmax") != 1 ||
+      input[1] != 16)
+    throw std::invalid_argument(
+        "RVNPU Softmax requires rank-4, axis=1 and dimension 16");
+  SoftmaxShape result;
+  result.output_shape = input;
+  result.outer = CheckedDimension(input[0], "Softmax outer");
+  result.axis = CheckedDimension(input[1], "Softmax axis");
+  result.inner = CheckedSizeDimension(
+      ShapeProduct(input, 2, input.size(), "Softmax inner"),
+      "Softmax inner");
+  result.elements = ShapeProduct(input, 0, input.size(), "Softmax");
+  return result;
+}
+
 inline MatMulShape ValidateMatMulShapes(const std::vector<int64_t> &a,
                                         const std::vector<int64_t> &b) {
   if (a.size() != 2 || b.size() != 2) {
@@ -177,9 +405,9 @@ inline MatMulShape ValidateMatMulShapes(const std::vector<int64_t> &a,
 
 inline UnaryTensorShape ValidateUnaryTensorShape(
     const std::vector<int64_t> &shape, const char *label) {
-  if (shape.empty() || shape.size() > 4) {
+  if (shape.size() > 4) {
     throw std::invalid_argument(std::string(label) +
-                                " requires tensor rank in [1, 4]");
+                                " requires tensor rank in [0, 4]");
   }
   UnaryTensorShape result;
   result.output_shape = shape;

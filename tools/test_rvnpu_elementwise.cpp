@@ -65,9 +65,9 @@ Options Parse(int argc, char **argv) {
       options.shape.empty()) {
     throw std::invalid_argument("--kernel-elf, --op and --shape are required");
   }
-  if (options.op != "add" && options.op != "mul" &&
-      options.op != "sigmoid") {
-    throw std::invalid_argument("--op must be add, mul or sigmoid");
+  if (options.op != "add" && options.op != "mul" && options.op != "sub" &&
+      options.op != "div" && options.op != "sigmoid") {
+    throw std::invalid_argument("--op must be add, mul, sub, div or sigmoid");
   }
   if (options.op != "sigmoid" && options.rhs_shape.empty())
     options.rhs_shape = options.shape;
@@ -126,11 +126,10 @@ int main(int argc, char **argv) {
         if (!std::isfinite(output[index]) ||
             std::abs(output[index] - reference) > 1e-4f) {
           throw std::runtime_error("Sigmoid mismatch at element " +
-                                   std::to_string(index) + ": input=" +
-                                   std::to_string(input[index]) +
+                                   std::to_string(index) +
+                                   ": input=" + std::to_string(input[index]) +
                                    " got=" + std::to_string(output[index]) +
-                                   " reference=" +
-                                   std::to_string(reference));
+                                   " reference=" + std::to_string(reference));
         }
       }
       std::cout << "PASS op=Sigmoid shape=" << ShapeText(options.shape)
@@ -154,25 +153,32 @@ int main(int argc, char **argv) {
 
     if (options.op == "add")
       context.RunAdd(lhs.data(), rhs.data(), output.data(), shape);
-    else
+    else if (options.op == "mul")
       context.RunMul(lhs.data(), rhs.data(), output.data(), shape);
+    else if (options.op == "sub")
+      context.RunSub(lhs.data(), rhs.data(), output.data(), shape);
+    else
+      context.RunDiv(lhs.data(), rhs.data(), output.data(), shape);
 
     float maximum = 0.0f;
     for (size_t index = 0; index < output.size(); ++index) {
       const float a = lhs[BroadcastIndex(index, shape.output_shape, lhs_shape)];
       const float b = rhs[BroadcastIndex(index, shape.output_shape, rhs_shape)];
-      const float reference = options.op == "add" ? a + b : a * b;
+      const float reference = options.op == "add"   ? a + b
+                              : options.op == "mul" ? a * b
+                              : options.op == "sub" ? a - b
+                                                    : a / b;
       maximum = std::max(maximum, std::abs(output[index] - reference));
+      const float tolerance = options.op == "div" ? 1e-4f : 1e-6f;
       if (!std::isfinite(output[index]) ||
-          std::abs(output[index] - reference) > 1e-6f) {
+          std::abs(output[index] - reference) > tolerance) {
         throw std::runtime_error(options.op + " mismatch at element " +
-                                 std::to_string(index) + ": got=" +
-                                 std::to_string(output[index]) +
+                                 std::to_string(index) +
+                                 ": got=" + std::to_string(output[index]) +
                                  " reference=" + std::to_string(reference));
       }
     }
-    std::cout << "PASS op=" << options.op
-              << " lhs=" << ShapeText(lhs_shape)
+    std::cout << "PASS op=" << options.op << " lhs=" << ShapeText(lhs_shape)
               << " rhs=" << ShapeText(rhs_shape)
               << " output=" << ShapeText(shape.output_shape)
               << " max_abs_diff=" << maximum << std::endl;
