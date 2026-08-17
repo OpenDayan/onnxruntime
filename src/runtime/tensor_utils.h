@@ -81,6 +81,7 @@ struct ResizeShape {
 struct TransposeShape {
   std::vector<int64_t> output_shape;
   std::array<int32_t, 4> dims{};
+  int32_t rank{};
   size_t elements{};
 };
 
@@ -90,6 +91,14 @@ struct SoftmaxShape {
   int32_t axis{};
   int32_t inner{};
   size_t elements{};
+};
+
+struct ReduceMaxShape {
+  std::vector<int64_t> output_shape;
+  int32_t rows{};
+  int32_t columns{};
+  size_t input_elements{};
+  size_t output_elements{};
 };
 
 struct ConvAttributes {
@@ -177,9 +186,20 @@ struct NmsShape {
   int32_t num_boxes{};
   int32_t num_classes{};
   int32_t max_output_per_class{};
+  int32_t center_point_box{};
   size_t boxes_elements{};
   size_t scores_elements{};
   size_t max_selected{};
+};
+
+struct GatherNdShape {
+  std::vector<int64_t> output_shape;
+  int32_t rows{};
+  int32_t index_depth{};
+  std::array<int32_t, 3> data_dims{};
+  size_t data_elements{};
+  size_t indices_elements{};
+  size_t output_elements{};
 };
 
 inline size_t CheckedMultiply(size_t a, size_t b, const char *label) {
@@ -349,16 +369,56 @@ ValidateResizeShape(const std::vector<int64_t> &input,
   return result;
 }
 
-inline TransposeShape
-ValidateTranspose0213Shape(const std::vector<int64_t> &input,
-                           const std::vector<int64_t> &perm) {
-  if (input.size() != 4 || perm != std::vector<int64_t>({0, 2, 1, 3}))
-    throw std::invalid_argument("RVNPU Transpose only supports perm [0,2,1,3]");
+inline TransposeShape ValidateTransposeShape(
+    const std::vector<int64_t> &input, const std::vector<int64_t> &perm) {
+  const bool rank3 =
+      input.size() == 3 && perm == std::vector<int64_t>({0, 2, 1}) &&
+      input[1] > 0 && input[1] <= 128 && input[2] > 0 &&
+      input[2] % 16 == 0;
+  const bool rank4 =
+      input.size() == 4 && perm == std::vector<int64_t>({0, 2, 1, 3});
+  if (!rank3 && !rank4)
+    throw std::invalid_argument(
+        "RVNPU Transpose requires rank-3 [N,C,K], C<=128, K divisible by 16 and perm [0,2,1], or rank-4 perm [0,2,1,3]");
   TransposeShape result;
-  for (size_t index = 0; index < 4; ++index)
+  result.rank = static_cast<int32_t>(input.size());
+  for (size_t index = 0; index < input.size(); ++index)
     result.dims[index] = CheckedDimension(input[index], "Transpose");
-  result.output_shape = {input[0], input[2], input[1], input[3]};
+  if (rank3) {
+    result.dims[3] = 1;
+    result.output_shape = {input[0], input[2], input[1]};
+  } else {
+    result.output_shape = {input[0], input[2], input[1], input[3]};
+  }
   result.elements = ShapeProduct(input, 0, input.size(), "Transpose");
+  return result;
+}
+
+inline ReduceMaxShape ValidateReduceMaxShape(
+    const std::vector<int64_t> &input, const std::vector<int64_t> &axes,
+    int64_t keepdims) {
+  if (input.empty() || input.size() > 4 || axes.size() != 1 ||
+      NormalizeAxis(axes[0], input.size(), "ReduceMax") + 1 != input.size() ||
+      (keepdims != 0 && keepdims != 1)) {
+    throw std::invalid_argument(
+        "RVNPU ReduceMax requires static rank 1-4, one last axis and keepdims 0 or 1");
+  }
+  if (std::any_of(input.begin(), input.end(),
+                  [](int64_t dimension) { return dimension <= 0; })) {
+    throw std::invalid_argument("RVNPU ReduceMax requires static dimensions");
+  }
+  ReduceMaxShape result;
+  result.columns = CheckedDimension(input.back(), "ReduceMax columns");
+  result.rows = CheckedSizeDimension(
+      ShapeProduct(input, 0, input.size() - 1, "ReduceMax rows"),
+      "ReduceMax rows");
+  result.output_shape = input;
+  if (keepdims == 0)
+    result.output_shape.pop_back();
+  else
+    result.output_shape.back() = 1;
+  result.input_elements = ShapeProduct(input, 0, input.size(), "ReduceMax");
+  result.output_elements = static_cast<size_t>(result.rows);
   return result;
 }
 
@@ -661,20 +721,23 @@ inline MaxPoolShape ValidateMaxPoolShape(
 inline TopKShape ValidateTopKShape(const std::vector<int64_t> &input,
                                    int64_t k,
                                    const TopKAttributes &attributes) {
-  if (input.size() != 2 ||
-      (attributes.axis != -1 && attributes.axis != 1) ||
+  if (input.empty() || input.size() > 4 ||
+      NormalizeAxis(attributes.axis, input.size(), "TopK") + 1 !=
+          input.size() ||
       attributes.largest != 1 || attributes.sorted != 1) {
     throw std::invalid_argument(
-        "RVNPU TopK requires rank-2, axis=-1, largest=1 and sorted=1");
+        "RVNPU TopK requires static rank 1-4, last axis, largest=1 and sorted=1");
   }
   TopKShape result;
-  result.rows = CheckedDimension(input[0], "TopK rows");
-  result.columns = CheckedDimension(input[1], "TopK columns");
+  result.rows = CheckedSizeDimension(
+      ShapeProduct(input, 0, input.size() - 1, "TopK rows"), "TopK rows");
+  result.columns = CheckedDimension(input.back(), "TopK columns");
   if (k <= 0 || k > result.columns || k > 300) {
     throw std::invalid_argument("RVNPU TopK requires K in [1, min(N, 300)]");
   }
   result.k = static_cast<int32_t>(k);
-  result.output_shape = {result.rows, result.k};
+  result.output_shape = input;
+  result.output_shape.back() = result.k;
   result.input_elements = CheckedMultiply(
       static_cast<size_t>(result.rows), result.columns, "TopK input");
   result.output_elements = CheckedMultiply(
@@ -693,22 +756,23 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
                                   const NmsAttributes &attributes) {
   if (boxes.size() != 3 || scores.size() != 3 || boxes[0] != 1 ||
       scores[0] != 1 || boxes[2] != 4 ||
-      attributes.center_point_box != 0) {
+      (attributes.center_point_box != 0 &&
+       attributes.center_point_box != 1)) {
     throw std::invalid_argument(
-        "RVNPU NMS requires corner boxes [1,N,4] and scores [1,C,N]");
+        "RVNPU NMS requires boxes [1,N,4], scores [1,C,N] and center_point_box 0 or 1");
   }
   NmsShape result;
+  result.center_point_box = static_cast<int32_t>(attributes.center_point_box);
   result.num_boxes = CheckedDimension(boxes[1], "NMS num_boxes");
   result.num_classes = CheckedDimension(scores[1], "NMS num_classes");
   const int32_t score_boxes =
       CheckedDimension(scores[2], "NMS score num_boxes");
-  if (score_boxes != result.num_boxes || max_output_per_class <= 0 ||
-      max_output_per_class > 300) {
+  if (score_boxes != result.num_boxes || max_output_per_class <= 0) {
     throw std::invalid_argument(
-        "RVNPU NMS requires matching boxes and max output in [1,300]");
+        "RVNPU NMS requires matching boxes and a positive max output");
   }
-  result.max_output_per_class =
-      static_cast<int32_t>(max_output_per_class);
+  result.max_output_per_class = static_cast<int32_t>(
+      std::min<int64_t>(max_output_per_class, result.num_boxes));
   result.boxes_elements =
       CheckedMultiply(static_cast<size_t>(result.num_boxes), 4, "NMS boxes");
   result.scores_elements = CheckedMultiply(
@@ -720,6 +784,50 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
   CheckedMultiply(result.scores_elements, sizeof(float), "NMS scores bytes");
   CheckedMultiply(CheckedMultiply(result.max_selected, 3, "NMS output"),
                   sizeof(int64_t), "NMS output bytes");
+  return result;
+}
+
+inline GatherNdShape
+ValidateGatherNdShape(const std::vector<int64_t> &data,
+                      const std::vector<int64_t> &indices,
+                      int64_t batch_dims) {
+  if (batch_dims != 0 || data.empty() || data.size() > 3 ||
+      indices.size() != 2 || indices[1] <= 0 ||
+      indices[1] > static_cast<int64_t>(data.size()) || indices[0] < 0) {
+    throw std::invalid_argument(
+        "RVNPU GatherND requires FP32 rank 1-3 data, INT64 [K,D] indices and batch_dims=0");
+  }
+
+  GatherNdShape result;
+  if (indices[0] > std::numeric_limits<int32_t>::max())
+    throw std::invalid_argument("GatherND row count is too large");
+  result.rows = static_cast<int32_t>(indices[0]);
+  result.index_depth = static_cast<int32_t>(indices[1]);
+  result.data_dims = {1, 1, 1};
+  for (size_t dimension = 0; dimension < data.size(); ++dimension)
+    result.data_dims[dimension] =
+        CheckedDimension(data[dimension], "GatherND data");
+
+  result.output_shape = {indices[0]};
+  size_t output_width = 1;
+  for (size_t dimension = static_cast<size_t>(result.index_depth);
+       dimension < data.size(); ++dimension) {
+    result.output_shape.push_back(data[dimension]);
+    output_width = CheckedMultiply(output_width,
+                                   static_cast<size_t>(data[dimension]),
+                                   "GatherND output width");
+  }
+  result.data_elements = ShapeProduct(data, 0, data.size(), "GatherND data");
+  result.indices_elements = CheckedMultiply(
+      static_cast<size_t>(result.rows),
+      static_cast<size_t>(result.index_depth), "GatherND indices");
+  result.output_elements = CheckedMultiply(static_cast<size_t>(result.rows),
+                                           output_width, "GatherND output");
+  CheckedMultiply(result.data_elements, sizeof(float), "GatherND data bytes");
+  CheckedMultiply(result.indices_elements, sizeof(int64_t),
+                  "GatherND indices bytes");
+  CheckedMultiply(result.output_elements, sizeof(float),
+                  "GatherND output bytes");
   return result;
 }
 

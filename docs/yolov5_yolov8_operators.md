@@ -1,52 +1,54 @@
 # YOLOv5 与 YOLOv8 算子需求对照
 
 以下以 FP32、batch=1、640×640、静态 ONNX 检测模型为基准。当前实际验证模型为
-Ultralytics 8.4.92 导出的 YOLOv8n、opset 13，输出 `[1,84,8400]`，不包含 NMS。
+Ultralytics 8.4.92 导出的 YOLOv8n、opset 13，输出 `[1,300,6]`，包含官方 NMS。
 YOLOv5 的算子会随导出版本和是否包含后处理而变化。
 
 | 功能分类 | ONNX 算子 | 简单功能 | YOLOv5 | 当前 YOLOv8n | 当前本地分支 |
 |---|---|---|---|---|---|
 | 主干计算 | `Conv` | 提取图像特征，包括普通卷积和 1×1 卷积 | 需要 | 需要 | **已支持** |
 | 主干计算 | `Sigmoid` | 将数值压缩到 0～1，也是 SiLU 的一部分 | 需要 | 需要 | **已支持** |
-| 主干计算 | `Mul` | 逐元素乘法，和 Sigmoid 组成 SiLU | 需要 | 58 个 FP32、2 个 INT64 | **FP32 已支持，INT64 由 ORT 处理** |
-| 主干计算 | `Add` | 残差连接和逐元素加法 | 需要 | 8 个 FP32、1 个 INT64 | **FP32 已支持，INT64 由 ORT 处理** |
+| 主干计算 | `Mul` | 逐元素乘法，和 Sigmoid 组成 SiLU | 需要 | 63 个 | **60 个由 RVNPU 执行** |
+| 主干计算 | `Add` | 残差连接和逐元素加法 | 需要 | 9 个 | **8 个由 RVNPU 执行** |
 | 主干计算 | `MaxPool` | 聚合局部特征，SPPF 模块使用 | 需要 | 需要 | **已支持** |
 | 多尺度融合 | `Resize` | 放大特征图，使不同尺度能够融合 | 需要 | 2 个 | **已支持** |
-| 多尺度融合 | `Concat` | 拼接不同层或不同尺度的特征图 | 需要 | 17 个 | **已支持** |
-| 数据整理 | `Constant` | 提供模型中预先保存的形状、索引和网格数据 | 视导出图而定 | 24 个 | **ORT 初始化处理** |
-| 数据整理 | `Reshape` | 改变张量形状，不改变元素值 | 需要 | 8 个 | **ORT 元数据处理** |
-| 数据整理 | `Transpose` | 调换张量维度顺序 | 视导出图而定 | 1 个 | **已支持** |
+| 多尺度融合 | `Concat` | 拼接不同层或不同尺度的特征图 | 需要 | 24 个 | **17 个由 RVNPU 执行** |
+| 数据整理 | `Constant` | 提供模型中预先保存的形状、索引和网格数据 | 视导出图而定 | 87 个 | **ORT 初始化处理** |
+| 数据整理 | `Reshape` | 改变张量形状，不改变元素值 | 需要 | 15 个 | **ORT 元数据处理** |
+| 数据整理 | `Transpose` | 调换张量维度顺序 | 视导出图而定 | 7 个 | **2 个由 RVNPU 执行** |
 | 数据整理 | `Split` | 将一个张量拆成多份 | 视导出图而定 | 8 个 | **已支持** |
-| 数据整理 | `Slice` | 从一个张量中取出连续区域 | 视导出图而定 | 2 个 | **已支持** |
-| 数据整理 | `Gather` | 根据索引选择数据 | 视导出图而定 | 1 个形状值 | **ORT 处理** |
-| 数据整理 | `Shape` | 取得张量各维度的大小 | 动态图常见 | 1 个 | **ORT 处理** |
-| 数据整理 | `Unsqueeze` | 增加一个长度为 1 的维度 | 视导出图而定 | 不包含 | **未实现** |
-| 数据整理 | `Squeeze` | 删除长度为 1 的维度 | 视导出图而定 | 不包含 | **未实现** |
+| 数据整理 | `Slice` | 从一个张量中取出连续区域 | 视导出图而定 | 10 个 | **6 个由 RVNPU 执行** |
+| 数据整理 | `Gather` | 根据索引选择数据 | 视导出图而定 | 13 个 | **ORT 处理** |
+| 数据整理 | `Shape` | 取得张量各维度的大小 | 动态图常见 | 5 个 | **ORT 处理** |
+| 数据整理 | `Unsqueeze` | 增加一个长度为 1 的维度 | 视导出图而定 | 7 个 | **ORT 处理** |
+| 数据整理 | `Squeeze` | 删除长度为 1 的维度 | 视导出图而定 | 1 个 | **ORT 处理** |
 | YOLOv5 框解码 | `Pow` | 某些导出图用平方计算 anchor 调整后的框宽高 | 视导出图而定 | 不包含 | **未实现** |
 | YOLOv8 DFL | `Softmax` | 将每条边的 16 个距离分数转换成概率 | 不需要 | 1 个 | **已支持** |
 | YOLOv8 DFL | `MatMul` | 某些导出图用固定权重对距离概率加权求和 | 不需要 | 当前模型不包含 | **已支持受限节点** |
-| 边框解码 | `Sub` | 用候选点坐标减去左边、上边距离 | 视导出图而定 | 2 个 | **已支持** |
-| 边框解码 | `Div` | 坐标或比例换算 | 视导出图而定 | 1 个 FP32、1 个 INT64 | **FP32 已支持，INT64 由 ORT 处理** |
-| 类别选择 | `ReduceMax` | 取得每个候选框的最高类别分数 | 可选后处理 | 不包含 | **未实现** |
-| 类别选择 | `ArgMax` | 取得最高分对应的类别编号 | 可选后处理 | 不包含 | **未实现** |
+| 边框解码 | `Sub` | 用候选点坐标减去左边、上边距离 | 视导出图而定 | 3 个 | **1 个由 RVNPU 执行** |
+| 边框解码 | `Div` | 坐标或比例换算 | 视导出图而定 | 2 个 | **1 个由 RVNPU 执行** |
+| 类别选择 | `ReduceMax` | 取得每个候选框的最高类别分数 | 可选后处理 | 官方 1 个，手动 0 个 | **已支持** |
+| 类别选择 | `ArgMax` | 取得最高分对应的类别编号 | 可选后处理 | 官方 1 个，手动 0 个 | **ORT 处理** |
 | 类别选择 | `OneHot` | 将类别编号变成类别选择向量 | 可选后处理 | 不包含 | **未实现** |
-| 检测后处理 | `TopK` | 从大量候选框中选出分数最高的一批 | 可选后处理 | 不包含 | **已支持独立测试** |
-| 检测后处理 | `NonMaxSuppression` | 删除指向同一物体的重叠候选框 | 可选后处理 | 不包含 | **已支持独立测试** |
+| 类别选择 | `TopK` | 手动版用 K=1 同时取得最高分和类别编号 | 可选后处理 | 官方 0 个，手动 1 个 | **已支持** |
+| 检测后处理 | `NonMaxSuppression` | 删除指向同一物体的重叠候选框 | 可选后处理 | 1 个 | **已支持** |
+| 检测后处理 | `GatherND` | 按索引取出候选 boxes 和 scores | 可选后处理 | 4 个 | **2 个 FP32 节点由 RVNPU 执行** |
 
 当前 `rvtv2/yolov8n-ops` 已注册：
 
 ```text
 MatMul, Add, Mul, Sub, Div, Sigmoid, Conv, MaxPool,
-Concat, Split, Slice, Resize, Transpose, Softmax, TopK, NonMaxSuppression
+Concat, Split, Slice, Resize, Transpose, Softmax, ReduceMax, TopK,
+NonMaxSuppression, GatherND
 ```
 
-当前 raw YOLOv8n 模型不包含 `ReduceMax`、`ArgMax`、`OneHot`、`TopK` 和
-`NonMaxSuppression`。前三项只是可选后处理方案；TopK/NMS 已通过独立 ONNX
-子图测试。实际模型的算子数量和 assignment 以
-[`yolov8n_onnx_operator_counts.md`](yolov8n_onnx_operator_counts.md) 为准。
+官方模型包含 `ReduceMax`、`ArgMax` 和 `NonMaxSuppression`，不包含 `TopK` 和
+`OneHot`。其中 ReduceMax、NMS 和两个 FP32 GatherND 已由 RVNPU 接管；普通 Gather、
+INT64 GatherND 及索引控制节点暂由 ORT 处理。实际算子数量和 assignment 以
+[`yolov8n_official_operator_counts.md`](yolov8n_official_operator_counts.md) 为准。
 
-当前模型中 `Constant`、`Shape`、`Gather`、`Reshape` 和单元素 INT64
-Add/Div/Mul 由 ORT 处理，其余 FP32 计算和数据整理节点由 RVNPU EP 接管。
+手动优化模型保持 `[1,300,6]` 输出，用一个 `TopK(K=1)` 同时生成最高类别分数和
+类别编号，不再包含 `ReduceMax` 和 `ArgMax`；官方模型保持不变。
 
 选择 YOLOv8n 作为主适配模型的依据：
 

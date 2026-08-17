@@ -32,14 +32,26 @@ def make_resize(directory: Path) -> None:
 
 
 def make_transpose(directory: Path) -> None:
-    input_shape, output_shape = [1, 4, 2, 16], [1, 2, 4, 16]
+    input_shape, output_shape = [1, 84, 32], [1, 32, 84]
     graph = helper.make_graph(
-        [helper.make_node("Transpose", ["input"], ["output"], perm=[0, 2, 1, 3])],
+        [helper.make_node("Transpose", ["input"], ["output"], perm=[0, 2, 1])],
         "rvnpu_transpose_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
     )
     save(directory, graph, np.arange(np.prod(input_shape), dtype=np.float32).reshape(input_shape))
+
+
+def make_reduce_max(directory: Path) -> None:
+    input_shape, output_shape = [1, 32, 80], [1, 32]
+    graph = helper.make_graph(
+        [helper.make_node("ReduceMax", ["input"], ["output"], axes=[-1], keepdims=0)],
+        "rvnpu_reduce_max_test",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
+    )
+    data = ((np.arange(np.prod(input_shape), dtype=np.int64) % 97) - 48).astype(np.float32)
+    save(directory, graph, data.reshape(input_shape))
 
 
 def make_softmax(directory: Path) -> None:
@@ -56,10 +68,17 @@ def make_softmax(directory: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--op", choices=["resize", "transpose", "softmax"], required=True)
+    parser.add_argument(
+        "--op", choices=["resize", "transpose", "reduce_max", "softmax"], required=True
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    {"resize": make_resize, "transpose": make_transpose, "softmax": make_softmax}[args.op](
+    {
+        "resize": make_resize,
+        "transpose": make_transpose,
+        "reduce_max": make_reduce_max,
+        "softmax": make_softmax,
+    }[args.op](
         args.output_dir / "supported"
     )
 

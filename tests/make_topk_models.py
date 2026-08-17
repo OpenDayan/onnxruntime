@@ -7,16 +7,17 @@ import onnx
 from onnx import TensorProto, helper, numpy_helper, shape_inference
 
 
-def make_case(directory: Path, rows: int, columns: int, k: int) -> None:
+def make_case(directory: Path, shape: list[int], k: int) -> None:
     directory.mkdir(parents=True, exist_ok=True)
+    output_shape = [*shape[:-1], k]
     input_info = helper.make_tensor_value_info(
-        "input", TensorProto.FLOAT, [rows, columns]
+        "input", TensorProto.FLOAT, shape
     )
     values_info = helper.make_tensor_value_info(
-        "values", TensorProto.FLOAT, [rows, k]
+        "values", TensorProto.FLOAT, output_shape
     )
     indices_info = helper.make_tensor_value_info(
-        "indices", TensorProto.INT64, [rows, k]
+        "indices", TensorProto.INT64, output_shape
     )
     k_value = np.array([k], dtype=np.int64)
     node = helper.make_node(
@@ -45,10 +46,8 @@ def make_case(directory: Path, rows: int, columns: int, k: int) -> None:
     onnx.checker.check_model(model)
     onnx.save(model, directory / "model.onnx")
 
-    flat = (np.arange(rows * columns, dtype=np.int64) * 7) % 11
-    input_data = (flat.astype(np.float32) * np.float32(0.125)).reshape(
-        rows, columns
-    )
+    flat = (np.arange(np.prod(shape), dtype=np.int64) * 7) % 11
+    input_data = (flat.astype(np.float32) * np.float32(0.125)).reshape(shape)
     input_data.tofile(directory / "input.bin")
 
 
@@ -56,7 +55,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    make_case(args.output_dir / "supported", 3, 17, 5)
+    make_case(args.output_dir / "supported", [1, 3, 17], 5)
 
 
 if __name__ == "__main__":

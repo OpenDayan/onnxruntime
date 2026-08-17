@@ -14,12 +14,16 @@ inline constexpr const char *kSliceFp32 = "slice_fp32";
 inline constexpr const char *kResizeNearestNchwFp32 =
     "resize_nearest_nchw_fp32";
 inline constexpr const char *kTranspose0213Fp32 = "transpose_0213_fp32";
+inline constexpr const char *kTranspose021Fp32 = "transpose_021_fp32";
 inline constexpr const char *kSoftmaxAxis1Fp32 = "softmax_axis1_fp32";
+inline constexpr const char *kReduceMaxLastDimFp32 =
+    "reduce_max_lastdim_fp32";
 inline constexpr const char *kSigmoidFp32 = "sigmoid_f32";
 inline constexpr const char *kIm2ColNchwFp32 = "im2col_nchw_fp32";
 inline constexpr const char *kMaxPool2dNchwFp32 = "maxpool2d_nchw_fp32";
 inline constexpr const char *kTopKLastDimFp32 = "topk_lastdim_fp32";
 inline constexpr const char *kNonMaxSuppressionFp32 =
     "non_max_suppression_fp32";
+inline constexpr const char *kGatherNdFp32 = "gather_nd_fp32";
 
 } // namespace rvnpu::kernels

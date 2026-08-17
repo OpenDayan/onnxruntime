@@ -7,9 +7,11 @@
 
 #include "ops/concat/concat.h"
 #include "ops/conv/conv.h"
+#include "ops/gather_nd/gather_nd.h"
 #include "ops/maxpool/maxpool.h"
 #include "ops/nms/nms.h"
 #include "ops/resize/resize.h"
+#include "ops/reduce_max/reduce_max.h"
 #include "ops/softmax/softmax.h"
 #include "ops/split/split.h"
 #include "ops/topk/topk.h"
@@ -19,6 +21,53 @@
 #include "runtime/tensor_utils.h"
 
 namespace rvnpu {
+
+namespace {
+
+std::optional<int64_t> ReadInt64Scalar(const Ort::ConstValue &value) {
+  if (value == nullptr)
+    return std::nullopt;
+  const auto info = value.GetTensorTypeAndShapeInfo();
+  if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ||
+      info.GetElementCount() != 1)
+    return std::nullopt;
+  return *value.GetTensorData<int64_t>();
+}
+
+std::optional<int64_t> ReadConstantInt64Scalar(
+    const Ort::ConstValueInfo &input) {
+  Ort::ConstValue initializer{nullptr};
+  if (input.GetInitializer(initializer).IsOK() && initializer != nullptr)
+    return ReadInt64Scalar(initializer);
+
+  const auto producer = input.GetProducerNode();
+  if (producer.node == nullptr ||
+      producer.node.GetOperatorType() != "Constant")
+    return std::nullopt;
+  Ort::ConstOpAttr attribute;
+  if (!producer.node.GetAttributeByName("value", attribute).IsOK() ||
+      attribute == nullptr)
+    return std::nullopt;
+  Ort::Value value{nullptr};
+  if (!attribute.GetTensorAttributeAsOrtValue(value).IsOK() || value == nullptr)
+    return std::nullopt;
+  return ReadInt64Scalar(value.GetConst());
+}
+
+bool IsNmsShapeCompatible(const std::vector<int64_t> &boxes,
+                          const std::vector<int64_t> &scores) {
+  if (boxes.empty() || scores.empty())
+    return true;
+  if (boxes.size() != 3 || scores.size() != 3)
+    return false;
+  if ((boxes[0] > 0 && boxes[0] != 1) ||
+      (scores[0] > 0 && scores[0] != 1) ||
+      (boxes[2] > 0 && boxes[2] != 4))
+    return false;
+  return boxes[1] <= 0 || scores[2] <= 0 || boxes[1] == scores[2];
+}
+
+} // namespace
 
 RvnpuEp::RvnpuEp(RvnpuEpFactory &factory, Config config,
                  const OrtLogger &logger)
@@ -138,6 +187,9 @@ bool RvnpuEp::SupportsConcat(const Ort::ConstNode &node) {
     const auto shape = TensorShape(input);
     if (!shape)
       return false;
+    if (std::any_of(shape->begin(), shape->end(),
+                    [](int64_t dimension) { return dimension == 0; }))
+      return false;
     shapes.push_back(*shape);
   }
   try {
@@ -210,6 +262,14 @@ bool RvnpuEp::SupportsSlice(const Ort::ConstNode &node) {
   const auto input_shape = TensorShape(inputs[0]);
   if (!input_shape || input_shape->empty() || input_shape->size() > 4)
     return false;
+  const auto outputs = node.GetOutputs();
+  if (outputs.size() != 1)
+    return false;
+  const auto output_shape = TensorShape(outputs[0]);
+  if (output_shape &&
+      std::any_of(output_shape->begin(), output_shape->end(),
+                  [](int64_t dimension) { return dimension == 0; }))
+    return false;
   return true;
 }
 
@@ -250,11 +310,15 @@ bool RvnpuEp::SupportsTranspose(const Ort::ConstNode &node) {
     return false;
   try {
     const auto perm = ReadTransposePerm(node);
-    if (input_shape->size() != 4 || perm != std::vector<int64_t>({0, 2, 1, 3}))
+    const bool rank3 = input_shape->size() == 3 &&
+                       perm == std::vector<int64_t>({0, 2, 1});
+    const bool rank4 = input_shape->size() == 4 &&
+                       perm == std::vector<int64_t>({0, 2, 1, 3});
+    if (!rank3 && !rank4)
       return false;
     if (std::all_of(input_shape->begin(), input_shape->end(),
                     [](int64_t dimension) { return dimension > 0; }))
-      static_cast<void>(ValidateTranspose0213Shape(*input_shape, perm));
+      static_cast<void>(ValidateTransposeShape(*input_shape, perm));
     return true;
   } catch (...) {
     return false;
@@ -281,6 +345,28 @@ bool RvnpuEp::SupportsSoftmax(const Ort::ConstNode &node) {
     if (std::all_of(input_shape->begin(), input_shape->end(),
                     [](int64_t dimension) { return dimension > 0; }))
       static_cast<void>(ValidateSoftmaxAxis1Shape(*input_shape, 1));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool RvnpuEp::SupportsReduceMax(const Ort::ConstNode &node) {
+  const auto domain = node.GetDomain();
+  if (node.GetOperatorType() != "ReduceMax" ||
+      !(domain.empty() || domain == "ai.onnx") ||
+      node.GetSinceVersion() != 13)
+    return false;
+  const auto inputs = node.GetInputs();
+  if (inputs.size() != 1 || !IsFloatTensor(inputs[0]))
+    return false;
+  const auto input_shape = TensorShape(inputs[0]);
+  if (!input_shape)
+    return false;
+  try {
+    const auto attributes = ReadReduceMaxAttributes(node);
+    static_cast<void>(ValidateReduceMaxShape(
+        *input_shape, attributes.axes, attributes.keepdims));
     return true;
   } catch (...) {
     return false;
@@ -414,8 +500,7 @@ bool RvnpuEp::SupportsNms(const Ort::ConstNode &node) {
   const auto outputs = node.GetOutputs();
   if (inputs.size() < 3 || inputs.size() > 5 || outputs.size() != 1 ||
       !IsFloatTensor(inputs[0]) || !IsFloatTensor(inputs[1]) ||
-      !IsTensorType(inputs[2], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) ||
-      !inputs[2].IsConstantInitializer()) {
+      !IsTensorType(inputs[2], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)) {
     return false;
   }
   for (size_t index = 3; index < inputs.size(); ++index) {
@@ -424,31 +509,66 @@ bool RvnpuEp::SupportsNms(const Ort::ConstNode &node) {
     if (!IsFloatTensor(inputs[index]))
       return false;
     const auto shape = TensorShape(inputs[index]);
-    if (!shape ||
-        (!shape->empty() && !(shape->size() == 1 && (*shape)[0] == 1))) {
+    if (!shape || (!shape->empty() &&
+                   !(shape->size() == 1 && (*shape)[0] <= 1))) {
       return false;
     }
   }
   const auto boxes = TensorShape(inputs[0]);
   const auto scores = TensorShape(inputs[1]);
-  if (!boxes || !scores) {
+  if (!boxes || !scores || !IsNmsShapeCompatible(*boxes, *scores)) {
     return false;
   }
   try {
-    Ort::ConstValue max_output_value{nullptr};
-    const Ort::Status status = inputs[2].GetInitializer(max_output_value);
-    if (!status.IsOK() || max_output_value == nullptr)
+    const auto max_output = ReadConstantInt64Scalar(inputs[2]);
+    if (!max_output || *max_output <= 0)
       return false;
-    const auto max_output_info = max_output_value.GetTensorTypeAndShapeInfo();
-    if (max_output_info.GetElementType() !=
-            ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ||
-        max_output_info.GetElementCount() != 1) {
-      return false;
-    }
     const auto attributes = ReadNmsAttributes(node);
-    static_cast<void>(ValidateNmsShapes(
-        *boxes, *scores, *max_output_value.GetTensorData<int64_t>(),
-        attributes));
+    if (attributes.center_point_box != 0 && attributes.center_point_box != 1)
+      return false;
+    const bool static_shapes =
+        !boxes->empty() && !scores->empty() &&
+        std::all_of(boxes->begin(), boxes->end(),
+                    [](int64_t dimension) { return dimension > 0; }) &&
+        std::all_of(scores->begin(), scores->end(),
+                    [](int64_t dimension) { return dimension > 0; });
+    if (static_shapes)
+      static_cast<void>(
+          ValidateNmsShapes(*boxes, *scores, *max_output, attributes));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool RvnpuEp::SupportsGatherNd(const Ort::ConstNode &node) {
+  const auto domain = node.GetDomain();
+  if (node.GetOperatorType() != "GatherND" ||
+      !(domain.empty() || domain == "ai.onnx") ||
+      node.GetSinceVersion() != 13) {
+    return false;
+  }
+  const auto inputs = node.GetInputs();
+  const auto outputs = node.GetOutputs();
+  if (inputs.size() != 2 || outputs.size() != 1 ||
+      !IsFloatTensor(inputs[0]) ||
+      !IsTensorType(inputs[1], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)) {
+    return false;
+  }
+  const auto data = TensorShape(inputs[0]);
+  const auto indices = TensorShape(inputs[1]);
+  if (!data || !indices || data->empty() || data->size() > 3 ||
+      indices->size() != 2 || (*indices)[1] <= 0 ||
+      (*indices)[1] > static_cast<int64_t>(data->size()) ||
+      ReadGatherNdBatchDims(node) != 0 ||
+      std::any_of(data->begin(), data->end(),
+                  [](int64_t dimension) { return dimension <= 0; })) {
+    return false;
+  }
+  if ((*indices)[0] < 0)
+    return true;
+  try {
+    static_cast<void>(ValidateGatherNdShape(*data, *indices, 0));
     return true;
   } catch (...) {
     return false;
@@ -461,7 +581,8 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
   RVNPU_EXCEPTION_GUARD_BEGIN
   auto &ep = *static_cast<RvnpuEp *>(ep_ptr);
   Ort::ConstGraph graph{graph_ptr};
-  for (const auto &node : graph.GetNodes()) {
+  const auto nodes = graph.GetNodes();
+  for (const auto &node : nodes) {
     if (!ep.IsOperatorEnabled(node.GetOperatorType()))
       continue;
     const bool supported =
@@ -471,8 +592,9 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
         SupportsBinaryElementwise(node, "Div") || SupportsConcat(node) ||
         SupportsSplit(node) || SupportsSlice(node) || SupportsResize(node) ||
         SupportsTranspose(node) || SupportsSoftmax(node) ||
+        SupportsReduceMax(node) ||
         SupportsSigmoid(node) || SupportsConv(node) || SupportsMaxPool(node) ||
-        SupportsTopK(node) || SupportsNms(node);
+        SupportsTopK(node) || SupportsNms(node) || SupportsGatherNd(node);
     if (!supported) {
       continue;
     }

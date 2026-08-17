@@ -29,7 +29,7 @@ Options Parse(int argc, char **argv) {
   }
   if (result.elf.empty() ||
       (result.op != "resize" && result.op != "transpose" &&
-       result.op != "softmax"))
+       result.op != "reduce_max" && result.op != "softmax"))
     throw std::invalid_argument("--kernel-elf and --op are required");
   return result;
 }
@@ -68,18 +68,50 @@ int main(int argc, char **argv) {
       std::cout << "Resize [1,2,4,4] -> [1,2,8,8] ";
       Compare(output, reference);
     } else if (options.op == "transpose") {
+      const auto run = [&](const std::vector<int64_t> &input_shape,
+                           const std::vector<int64_t> &perm) {
+        const auto shape = rvnpu::ValidateTransposeShape(input_shape, perm);
+        std::vector<float> input(shape.elements), output(shape.elements),
+            reference(shape.elements);
+        for (size_t index = 0; index < input.size(); ++index)
+          input[index] = static_cast<float>(index);
+        const int32_t d0 = shape.dims[0];
+        const int32_t d1 = shape.dims[1];
+        const int32_t d2 = shape.dims[2];
+        const int32_t d3 = shape.dims[3];
+        for (int32_t i0 = 0; i0 < d0; ++i0)
+          for (int32_t i1 = 0; i1 < d1; ++i1)
+            for (int32_t i2 = 0; i2 < d2; ++i2)
+              for (int32_t i3 = 0; i3 < d3; ++i3) {
+                const size_t source =
+                    ((static_cast<size_t>(i0) * d1 + i1) * d2 + i2) * d3 + i3;
+                const size_t destination =
+                    ((static_cast<size_t>(i0) * d2 + i2) * d1 + i1) * d3 + i3;
+                reference[destination] = input[source];
+              }
+        context.RunTranspose(input.data(), output.data(), shape);
+        std::cout << "Transpose rank=" << shape.rank << " ";
+        Compare(output, reference);
+      };
+      run({1, 84, 32}, {0, 2, 1});
+      run({1, 4, 2, 16}, {0, 2, 1, 3});
+    } else if (options.op == "reduce_max") {
       const auto shape =
-          rvnpu::ValidateTranspose0213Shape({1, 4, 2, 16}, {0, 2, 1, 3});
-      std::vector<float> input(shape.elements), output(shape.elements),
-          reference(shape.elements);
+          rvnpu::ValidateReduceMaxShape({1, 32, 80}, {-1}, 0);
+      std::vector<float> input(shape.input_elements),
+          output(shape.output_elements), reference(shape.output_elements);
       for (size_t index = 0; index < input.size(); ++index)
-        input[index] = static_cast<float>(index);
-      for (int32_t i1 = 0; i1 < 4; ++i1)
-        for (int32_t i2 = 0; i2 < 2; ++i2)
-          for (int32_t i3 = 0; i3 < 16; ++i3)
-            reference[(i2 * 4 + i1) * 16 + i3] = input[(i1 * 2 + i2) * 16 + i3];
-      context.RunTranspose(input.data(), output.data(), shape);
-      std::cout << "Transpose perm=[0,2,1,3] shape=[1,4,2,16] ";
+        input[index] =
+            static_cast<float>(static_cast<int>(index % 97) - 48);
+      for (int32_t row = 0; row < shape.rows; ++row) {
+        float maximum = input[static_cast<size_t>(row) * shape.columns];
+        for (int32_t column = 1; column < shape.columns; ++column)
+          maximum = std::max(
+              maximum, input[static_cast<size_t>(row) * shape.columns + column]);
+        reference[row] = maximum;
+      }
+      context.RunReduceMax(input.data(), output.data(), shape);
+      std::cout << "ReduceMax shape=[1,32,80] axis=-1 ";
       Compare(output, reference);
     } else {
       const auto shape = rvnpu::ValidateSoftmaxAxis1Shape({1, 16, 2, 16}, 1);

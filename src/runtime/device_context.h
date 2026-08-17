@@ -41,6 +41,8 @@ public:
   void RunTranspose(const float *input, float *output,
                     const TransposeShape &shape);
   void RunSoftmax(const float *input, float *output, const SoftmaxShape &shape);
+  void RunReduceMax(const float *input, float *output,
+                    const ReduceMaxShape &shape);
   void RunSigmoid(const float *input, float *output,
                   const UnaryTensorShape &shape);
   void RunConv(const float *input, const float *weight, const float *bias,
@@ -51,6 +53,8 @@ public:
   std::vector<int64_t> RunNms(const float *boxes, const float *scores,
                               float iou_threshold, float score_threshold,
                               const NmsShape &shape);
+  void RunGatherNd(const float *data, const int64_t *indices, float *output,
+                   const GatherNdShape &shape);
   const std::string &kernel_elf() const noexcept { return kernel_elf_; }
 
 private:

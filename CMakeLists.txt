@@ -48,12 +48,14 @@ add_library(rvnpu_ep SHARED
   src/ops/concat/concat.cpp
   src/ops/conv/conv.cpp
   src/ops/elementwise/elementwise.cpp
+  src/ops/gather_nd/gather_nd.cpp
   src/ops/matmul/matmul.cpp
   src/ops/maxpool/maxpool.cpp
   src/ops/topk/topk.cpp
   src/ops/nms/nms.cpp)
 target_sources(rvnpu_ep PRIVATE
   src/ops/resize/resize.cpp
+  src/ops/reduce_max/reduce_max.cpp
   src/ops/slice/slice.cpp
   src/ops/softmax/softmax.cpp
   src/ops/split/split.cpp
@@ -118,6 +120,18 @@ add_executable(test_rvnpu_nms_onnx tools/test_rvnpu_nms_onnx.cpp)
 target_include_directories(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_nms_onnx PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
+
+add_executable(test_rvnpu_yolo_postprocess tools/test_rvnpu_yolo_postprocess.cpp)
+target_include_directories(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_yolo_postprocess PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
+
+add_executable(test_rvnpu_yolov8n tools/test_rvnpu_yolov8n.cpp)
+target_include_directories(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_rvnpu_yolov8n PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
 enable_testing()

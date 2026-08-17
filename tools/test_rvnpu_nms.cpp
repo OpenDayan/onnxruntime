@@ -19,17 +19,29 @@ struct TestCase {
   int64_t max_output{};
   float iou_threshold{};
   float score_threshold{};
+  int64_t center_point_box{};
 };
 
-float Iou(const float *lhs, const float *rhs) {
-  const float ly1 = std::min(lhs[0], lhs[2]);
-  const float lx1 = std::min(lhs[1], lhs[3]);
-  const float ly2 = std::max(lhs[0], lhs[2]);
-  const float lx2 = std::max(lhs[1], lhs[3]);
-  const float ry1 = std::min(rhs[0], rhs[2]);
-  const float rx1 = std::min(rhs[1], rhs[3]);
-  const float ry2 = std::max(rhs[0], rhs[2]);
-  const float rx2 = std::max(rhs[1], rhs[3]);
+void Corners(const float *box, int64_t center_point_box, float &y1,
+             float &x1, float &y2, float &x2) {
+  if (center_point_box == 1) {
+    x1 = box[0] - box[2] * 0.5f;
+    y1 = box[1] - box[3] * 0.5f;
+    x2 = box[0] + box[2] * 0.5f;
+    y2 = box[1] + box[3] * 0.5f;
+  } else {
+    y1 = std::min(box[0], box[2]);
+    x1 = std::min(box[1], box[3]);
+    y2 = std::max(box[0], box[2]);
+    x2 = std::max(box[1], box[3]);
+  }
+}
+
+float Iou(const float *lhs, const float *rhs, int64_t center_point_box) {
+  float ly1 = 0.0f, lx1 = 0.0f, ly2 = 0.0f, lx2 = 0.0f;
+  float ry1 = 0.0f, rx1 = 0.0f, ry2 = 0.0f, rx2 = 0.0f;
+  Corners(lhs, center_point_box, ly1, lx1, ly2, lx2);
+  Corners(rhs, center_point_box, ry1, rx1, ry2, rx2);
   const float intersection =
       std::max(0.0f, std::min(ly2, ry2) - std::max(ly1, ry1)) *
       std::max(0.0f, std::min(lx2, rx2) - std::max(lx1, rx1));
@@ -59,7 +71,8 @@ std::vector<int64_t> Reference(const TestCase &test) {
       bool suppressed = false;
       for (const int64_t previous : selected) {
         if (Iou(test.boxes.data() + candidate * 4,
-                test.boxes.data() + previous * 4) > test.iou_threshold) {
+                test.boxes.data() + previous * 4,
+                test.center_point_box) > test.iou_threshold) {
           suppressed = true;
           break;
         }
@@ -81,23 +94,68 @@ TestCase MakeCase(const std::string &name) {
       3.0f, 3.0f, 4.0f, 4.0f, 5.0f, 0.0f, 6.0f, 1.0f};
   if (name == "nonoverlap") {
     return {{0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5},
-            {0.9f, 0.8f, 0.7f}, 3, 1, 3, 0.5f, 0.0f};
+            {0.9f, 0.8f, 0.7f}, 3, 1, 3, 0.5f, 0.0f, 0};
   }
   if (name == "overlap")
-    return {boxes, {0.9f, 0.8f, 0.7f, 0.6f}, 4, 1, 3, 0.5f, 0.0f};
+    return {boxes, {0.9f, 0.8f, 0.7f, 0.6f}, 4, 1, 3, 0.5f, 0.0f, 0};
   if (name == "multiclass") {
     return {boxes,
             {0.9f, 0.8f, 0.7f, 0.6f, 0.1f, 0.95f, 0.5f, 0.85f},
-            4, 2, 2, 0.5f, 0.0f};
+            4, 2, 2, 0.5f, 0.0f, 0};
   }
   if (name == "empty")
-    return {boxes, {0.9f, 0.8f, 0.7f, 0.6f}, 4, 1, 3, 0.5f, 0.95f};
+    return {boxes, {0.9f, 0.8f, 0.7f, 0.6f}, 4, 1, 3, 0.5f, 0.95f, 0};
   if (name == "boundary") {
     return {{0.0f, 0.0f, 1.0f, 1.0f,
              0.0f, 0.0f, 1.0f, 2.0f},
-            {0.9f, 0.8f}, 2, 1, 2, 0.5f, 0.0f};
+            {0.9f, 0.8f}, 2, 1, 2, 0.5f, 0.0f, 0};
+  }
+  if (name == "center") {
+    return {{1.0f, 1.0f, 2.0f, 2.0f,
+             1.1f, 1.1f, 2.0f, 2.0f,
+             3.5f, 3.5f, 1.0f, 1.0f,
+             0.5f, 5.5f, 1.0f, 1.0f},
+            {0.9f, 0.8f, 0.7f, 0.6f}, 4, 1, 3, 0.5f, 0.0f, 1};
   }
   throw std::invalid_argument("unknown NMS case: " + name);
+}
+
+void TestGatherNd(rvnpu::DeviceContext &context) {
+  const std::vector<float> candidates = {
+      0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23};
+  const std::vector<int64_t> candidate_indices = {2, 0};
+  std::vector<float> selected_candidates(8);
+  const auto candidate_shape =
+      rvnpu::ValidateGatherNdShape({3, 4}, {2, 1}, 0);
+  context.RunGatherNd(candidates.data(), candidate_indices.data(),
+                      selected_candidates.data(), candidate_shape);
+  if (selected_candidates !=
+      std::vector<float>({20, 21, 22, 23, 0, 1, 2, 3}))
+    throw std::runtime_error("GatherND candidate filter mismatch");
+
+  const std::vector<float> boxes = {
+      0, 0, 1, 1, 2, 2, 3, 3,
+      4, 4, 5, 5, 6, 6, 7, 7};
+  const std::vector<int64_t> box_indices = {0, 2, 0, 0};
+  std::vector<float> selected_boxes(8);
+  const auto box_shape =
+      rvnpu::ValidateGatherNdShape({1, 4, 4}, {2, 2}, 0);
+  context.RunGatherNd(boxes.data(), box_indices.data(),
+                      selected_boxes.data(), box_shape);
+  if (selected_boxes != std::vector<float>({4, 4, 5, 5, 0, 0, 1, 1}))
+    throw std::runtime_error("GatherND boxes mismatch");
+
+  std::vector<float> scores(32);
+  for (size_t index = 0; index < scores.size(); ++index)
+    scores[index] = static_cast<float>(index);
+  const std::vector<int64_t> score_indices = {0, 1, 15, 0, 0, 0};
+  std::vector<float> selected_scores(2);
+  const auto score_shape =
+      rvnpu::ValidateGatherNdShape({1, 2, 16}, {2, 3}, 0);
+  context.RunGatherNd(scores.data(), score_indices.data(),
+                      selected_scores.data(), score_shape);
+  if (selected_scores != std::vector<float>({scores[31], scores[0]}))
+    throw std::runtime_error("GatherND scores mismatch");
 }
 
 } // namespace
@@ -118,11 +176,17 @@ int main(int argc, char **argv) {
     }
     if (kernel_elf.empty() || case_name.empty())
       throw std::invalid_argument("--kernel-elf and --case are required");
+    rvnpu::DeviceContext context(kernel_elf);
+    if (case_name == "gathernd") {
+      TestGatherNd(context);
+      std::cout << "PASS case=gathernd candidates=2 boxes=2 scores=2"
+                << std::endl;
+      return 0;
+    }
     const TestCase test = MakeCase(case_name);
     const auto shape = rvnpu::ValidateNmsShapes(
         {1, test.num_boxes, 4}, {1, test.num_classes, test.num_boxes},
-        test.max_output, {});
-    rvnpu::DeviceContext context(kernel_elf);
+        test.max_output, {test.center_point_box});
     const auto output =
         context.RunNms(test.boxes.data(), test.scores.data(),
                        test.iou_threshold, test.score_threshold, shape);

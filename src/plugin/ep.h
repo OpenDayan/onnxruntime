@@ -39,11 +39,13 @@ private:
   static bool SupportsResize(const Ort::ConstNode &node);
   static bool SupportsTranspose(const Ort::ConstNode &node);
   static bool SupportsSoftmax(const Ort::ConstNode &node);
+  static bool SupportsReduceMax(const Ort::ConstNode &node);
   static bool SupportsSigmoid(const Ort::ConstNode &node);
   static bool SupportsConv(const Ort::ConstNode &node);
   static bool SupportsMaxPool(const Ort::ConstNode &node);
   static bool SupportsTopK(const Ort::ConstNode &node);
   static bool SupportsNms(const Ort::ConstNode &node);
+  static bool SupportsGatherNd(const Ort::ConstNode &node);
   bool IsOperatorEnabled(const std::string &operator_type) const;
 
   RvnpuEpFactory &factory_;

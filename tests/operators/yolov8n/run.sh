@@ -3,39 +3,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ELF="${RVNPU_KERNEL_ELF:?RVNPU_KERNEL_ELF is required}"
-RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_onnx_model"
+YOLO_RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_yolov8n"
 PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"
-
-ALL_COUNTS="Conv=64,Add=8,Mul=58,Sub=2,Div=1,Sigmoid=58,MaxPool=3,Concat=17,Split=8,Slice=2,Resize=2,Transpose=1,Softmax=1"
-ENABLED_OPERATOR="${RVNPU_YOLO_OPERATOR:-}"
-if [[ -n "${ENABLED_OPERATOR}" ]]; then
-  case "${ENABLED_OPERATOR}" in
-    Conv) COUNT=64 ;;
-    Add) COUNT=8 ;;
-    Mul) COUNT=58 ;;
-    Sub|Slice|Resize) COUNT=2 ;;
-    Div) COUNT=1 ;;
-    Sigmoid) COUNT=58 ;;
-    MaxPool) COUNT=3 ;;
-    Concat) COUNT=17 ;;
-    Split) COUNT=8 ;;
-    Transpose|Softmax) COUNT=1 ;;
-    *) echo "YOLOv8n 不支持筛选算子：${ENABLED_OPERATOR}" >&2; exit 2 ;;
-  esac
-  ASSIGNMENT="${ENABLED_OPERATOR}=${COUNT}"
-  ENABLE_ARGS=(--enabled-ops "${ENABLED_OPERATOR}")
-else
-  ASSIGNMENT="${ALL_COUNTS}"
-  ENABLE_ARGS=()
+DATA_DIR="${MODEL_DIR}/data"
+if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
+  DATA_DIR="${MODEL_DIR}/image_data"
 fi
 
-"${RUNNER}" \
-  --model "${MODEL_DIR}/yolov8n.onnx" \
-  --plugin "${PLUGIN}" \
-  --kernel-elf "${ELF}" \
-  --data-dir "${MODEL_DIR}/data" \
-  "${ENABLE_ARGS[@]}" \
-  --expect-rvnpu-counts "${ASSIGNMENT}" \
-  --report-max-error-percent \
-  --atol 1e-3 --rtol 1e-3
+EXTRA_ARGS=()
+if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
+  RESULT_DIR="${MODEL_DIR}/image_results"
+  EXTRA_ARGS=(--smoke --results-json "${RESULT_DIR}/results.json")
+fi
+"${YOLO_RUNNER}" --model "${MODEL_DIR}/yolov8n.onnx" \
+  --plugin "${PLUGIN}" --kernel-elf "${ELF}" --data-dir "${DATA_DIR}" \
+  "${EXTRA_ARGS[@]}"
+if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
+  "${PYTHON_EXECUTABLE:-python3}" "${ROOT_DIR}/tests/yolov8n_image.py" draw \
+    --metadata "${DATA_DIR}/image_meta.json" \
+    --results "${RESULT_DIR}/results.json" --output-dir "${RESULT_DIR}"
+fi

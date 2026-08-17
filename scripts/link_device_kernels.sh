@@ -87,10 +87,12 @@ kernel_sources=(
   kernel_resize.cpp
   kernel_transpose.cpp
   kernel_softmax.cpp
+  kernel_reduce_max.cpp
   kernel_im2col.cpp
   kernel_maxpool.cpp
   kernel_topk.cpp
   kernel_nms.cpp
+  kernel_gather_nd.cpp
 )
 
 kernel_objects=()

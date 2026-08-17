@@ -285,10 +285,16 @@ void DeviceContext::RunTranspose(const float *input, float *output,
   DeviceBuffer device_input(runtime_, bytes);
   DeviceBuffer device_output(runtime_, bytes);
   device_input.CopyFromHost(input, bytes);
-  LaunchKernelLocked("RVNPU Transpose", kernels::kTranspose0213Fp32, "",
-                     device_input.address(), device_output.address(),
-                     shape.dims[0], shape.dims[1], shape.dims[2],
-                     shape.dims[3]);
+  if (shape.rank == 3) {
+    LaunchKernelLocked("RVNPU Transpose", kernels::kTranspose021Fp32, "",
+                       device_input.address(), device_output.address(),
+                       shape.dims[0], shape.dims[1], shape.dims[2]);
+  } else {
+    LaunchKernelLocked("RVNPU Transpose", kernels::kTranspose0213Fp32, "",
+                       device_input.address(), device_output.address(),
+                       shape.dims[0], shape.dims[1], shape.dims[2],
+                       shape.dims[3]);
+  }
   device_output.CopyToHost(output, bytes);
 }
 
@@ -305,6 +311,22 @@ void DeviceContext::RunSoftmax(const float *input, float *output,
                      device_input.address(), device_output.address(),
                      shape.outer, shape.axis, shape.inner);
   device_output.CopyToHost(output, bytes);
+}
+
+void DeviceContext::RunReduceMax(const float *input, float *output,
+                                 const ReduceMaxShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU ReduceMax received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  const size_t output_bytes = shape.output_elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  LaunchKernelLocked("RVNPU ReduceMax", kernels::kReduceMaxLastDimFp32, "",
+                     device_input.address(), device_output.address(),
+                     shape.rows, shape.columns);
+  device_output.CopyToHost(output, output_bytes);
 }
 
 void DeviceContext::RunSigmoid(const float *input, float *output,
@@ -481,7 +503,8 @@ std::vector<int64_t> DeviceContext::RunNms(const float *boxes,
                      details, device_boxes.address(), device_scores.address(),
                      device_output.address(), device_count.address(),
                      shape.num_boxes, shape.num_classes,
-                     shape.max_output_per_class, iou_bits, score_bits);
+                     shape.max_output_per_class, iou_bits, score_bits,
+                     shape.center_point_box);
 
   uint64_t selected = 0;
   device_count.CopyToHost(&selected, sizeof(selected));
@@ -492,6 +515,35 @@ std::vector<int64_t> DeviceContext::RunNms(const float *boxes,
   if (!output.empty())
     device_output.CopyToHost(output.data(), output.size() * sizeof(int64_t));
   return output;
+}
+
+void DeviceContext::RunGatherNd(const float *data, const int64_t *indices,
+                                float *output, const GatherNdShape &shape) {
+  if (shape.rows == 0)
+    return;
+  if (data == nullptr || indices == nullptr || output == nullptr) {
+    throw std::invalid_argument("RVNPU GatherND received a null tensor pointer");
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t data_bytes = shape.data_elements * sizeof(float);
+  const size_t indices_bytes = shape.indices_elements * sizeof(int64_t);
+  const size_t output_bytes = shape.output_elements * sizeof(float);
+  DeviceBuffer device_data(runtime_, data_bytes);
+  DeviceBuffer device_indices(runtime_, indices_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_data.CopyFromHost(data, data_bytes);
+  device_indices.CopyFromHost(indices, indices_bytes);
+
+  const std::string details = " rows=" + std::to_string(shape.rows) +
+                              " depth=" +
+                              std::to_string(shape.index_depth);
+  LaunchKernelLocked("RVNPU GatherND", kernels::kGatherNdFp32, details,
+                     device_data.address(), device_indices.address(),
+                     device_output.address(), shape.rows, shape.index_depth,
+                     shape.data_dims[0], shape.data_dims[1],
+                     shape.data_dims[2]);
+  device_output.CopyToHost(output, output_bytes);
 }
 
 } // namespace rvnpu

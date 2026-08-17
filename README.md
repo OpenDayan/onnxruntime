@@ -6,10 +6,14 @@
 
 ```text
 MatMul, Add, Mul, Sub, Div, Sigmoid, Conv, MaxPool,
-Concat, Split, Slice, Resize, Transpose, Softmax, TopK, NonMaxSuppression
+Concat, Split, Slice, Resize, Transpose, Softmax, ReduceMax, TopK,
+NonMaxSuppression, GatherND
 ```
 
-当前 YOLOv8n 的 FP32 计算节点和数据整理节点均具备 RVNPU 接管实现。`Constant`、`Shape`、`Gather`、`Reshape` 以及 4 个 INT64 形状计算节点留给 ORT 处理。
+YOLOv8n 默认使用 Ultralytics 官方 `nms=True` ONNX，输出 FP32
+`[1,300,6]`，每行是 `x1、y1、x2、y2、score、class`。主网络中已支持的
+FP32 节点由 RVNPU 执行；官方后处理中的 ReduceMax、NMS 和两个 FP32 GatherND
+已接管，普通 Gather 和 INT64 控制节点暂由 ORT/CPU 执行。
 
 ## 1. 准备开发环境
 
@@ -98,11 +102,12 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh resize
 ./scripts/test_operator.sh transpose
 ./scripts/test_operator.sh softmax
+./scripts/test_operator.sh reduce_max
 ./scripts/test_operator.sh topk
 ./scripts/test_operator.sh nms
 ```
 
-每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。NMS 测试还包含标准 `TopK → NMS` 后处理子图。
+每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。NMS 测试还包含 `Split → Transpose → NMS → GatherND` YOLO 后处理子图。
 
 ## 6. YOLOv8n 测试
 
@@ -118,12 +123,31 @@ python3 -m pip install --user ultralytics==8.4.92
 ./scripts/test_operator.sh yolov8n
 ```
 
-模型为 opset 13、FP32、静态 `[1,3,640,640]`，不包含 NMS。脚本会在内部检查实际 EP assignment，并分别运行一次 CPU 和 RVNPU。
+模型为 opset 13、FP32、静态 `[1,3,640,640]`。准备阶段生成官方
+`nms=True` 模型 `build/yolov8n/yolov8n.onnx`，该命令默认运行主网络和官方
+后处理，输出 `[1,300,6]`。官方后处理中的未支持节点自动回退到 ORT/CPU。
 
-只验证 YOLO 中某一个 RVNPU 算子时：
+NMS 的受限算子契约和小后处理子图继续由 `./scripts/test_operator.sh nms` 覆盖。
+
+指定真实图片测试并画框：
 
 ```bash
-RVNPU_YOLO_OPERATOR=Softmax ./scripts/test_operator.sh yolov8n
+./scripts/test_operator.sh yolov8n \
+  /home/dev/.local/lib/python3.10/site-packages/ultralytics/assets/bus.jpg
 ```
+
+结果保存在 `build/yolov8n/image_results/`。
+
+手动优化版使用 `TopK(K=1)` 一次取得最高类别分数和类别编号，替代官方后处理中的
+`ReduceMax + ArgMax`，输出仍为 `[1,300,6]`：
+
+```bash
+./scripts/test_operator.sh yolov8n_manual
+./scripts/test_operator.sh yolov8n_manual \
+  /home/dev/.local/lib/python3.10/site-packages/ultralytics/assets/bus.jpg
+```
+
+手动模型保存在 `build/yolov8n/yolov8n_manual.onnx`，图片结果保存在
+`build/yolov8n/manual_image_results/`。官方 `yolov8n.onnx` 不做修改。
 
 所有模型、SDK、ELF 和日志均生成在被忽略的 `build/` 中。

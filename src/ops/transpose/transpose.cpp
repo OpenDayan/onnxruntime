@@ -60,8 +60,7 @@ OrtStatus *ORT_API_CALL TransposeKernel::ComputeImpl(
   const auto input_info = input.GetTensorTypeAndShapeInfo();
   if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
     throw std::invalid_argument("RVNPU Transpose requires FP32 input");
-  const auto shape =
-      ValidateTranspose0213Shape(input_info.GetShape(), self.perm_);
+  const auto shape = ValidateTransposeShape(input_info.GetShape(), self.perm_);
   Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
   self.context_->RunTranspose(input.GetTensorData<float>(),
                               output.GetTensorMutableData<float>(), shape);

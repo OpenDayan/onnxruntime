@@ -116,6 +116,20 @@ int main() {
   assert((pool.output_shape == std::vector<int64_t>{1, 16, 32, 32}));
   assert(pool.output_elements == 16 * 32 * 32);
 
+  const auto transpose =
+      rvnpu::ValidateTransposeShape({1, 4, 8400}, {0, 2, 1});
+  assert(transpose.rank == 3 && transpose.dims[3] == 1);
+  assert((transpose.output_shape == std::vector<int64_t>{1, 8400, 4}));
+
+  const auto nms = rvnpu::ValidateNmsShapes(
+      {1, 8400, 4}, {1, 80, 8400}, 300, {1});
+  assert(nms.center_point_box == 1 && nms.num_boxes == 8400 &&
+         nms.num_classes == 80);
+
+  const auto topk = rvnpu::ValidateTopKShape({1, 8400, 80}, 1, {});
+  assert(topk.rows == 8400 && topk.columns == 80 && topk.k == 1);
+  assert((topk.output_shape == std::vector<int64_t>{1, 8400, 1}));
+
   rejected = false;
   try {
     static_cast<void>(rvnpu::ValidateMaxPoolShape(
