@@ -37,14 +37,22 @@ public:
   void RunSplit(const float *input, const std::vector<float *> &outputs,
                 const SplitShape &shape);
   void RunSlice(const float *input, float *output, const SliceShape &shape);
+  void RunSlice(const int64_t *input, int64_t *output,
+                const SliceShape &shape);
   void RunResize(const float *input, float *output, const ResizeShape &shape);
   void RunTranspose(const float *input, float *output,
+                    const TransposeShape &shape);
+  void RunTranspose(const int64_t *input, int64_t *output,
                     const TransposeShape &shape);
   void RunSoftmax(const float *input, float *output, const SoftmaxShape &shape);
   void RunReduceMax(const float *input, float *output,
                     const ReduceMaxShape &shape);
+  void RunArgMax(const float *input, int64_t *output,
+                 const ArgMaxShape &shape);
   void RunSigmoid(const float *input, float *output,
                   const UnaryTensorShape &shape);
+  void RunSilu(const float *input, float *output,
+               const UnaryTensorShape &shape);
   void RunConv(const float *input, const float *weight, const float *bias,
                float *output, const ConvShape &shape);
   void RunMaxPool(const float *input, float *output, const MaxPoolShape &shape);
@@ -55,6 +63,8 @@ public:
                               const NmsShape &shape);
   void RunGatherNd(const float *data, const int64_t *indices, float *output,
                    const GatherNdShape &shape);
+  void RunGatherNd(const int64_t *data, const int64_t *indices,
+                   int64_t *output, const GatherNdShape &shape);
   const std::string &kernel_elf() const noexcept { return kernel_elf_; }
 
 private:

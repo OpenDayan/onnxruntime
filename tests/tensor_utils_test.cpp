@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <climits>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -68,6 +69,21 @@ int main() {
   assert((broadcast.broadcast_dims ==
           std::array<uint32_t, 4>{1, 1, 3, 1}));
 
+  const auto empty =
+      rvnpu::ValidateBinaryElementwiseShapes({0}, {}, "Div");
+  assert(empty.output_elements == 0);
+  assert((empty.output_shape == std::vector<int64_t>{0}));
+
+  const auto empty_concat =
+      rvnpu::ValidateConcatShapes({{0, 2}, {0, 3}}, 1);
+  assert(empty_concat.output_elements == 0 && empty_concat.outer == 0);
+  assert((empty_concat.output_shape == std::vector<int64_t>{0, 5}));
+
+  const auto empty_slice =
+      rvnpu::ValidateSliceShape({0, 4}, 0, 2, 1, 1);
+  assert(empty_slice.output_elements == 0 && empty_slice.outer == 0);
+  assert((empty_slice.output_shape == std::vector<int64_t>{0, 2}));
+
   rejected = false;
   try {
     static_cast<void>(
@@ -121,14 +137,48 @@ int main() {
   assert(transpose.rank == 3 && transpose.dims[3] == 1);
   assert((transpose.output_shape == std::vector<int64_t>{1, 8400, 4}));
 
+  const auto transpose_int64 =
+      rvnpu::ValidateTransposeShape({5, 2}, {1, 0});
+  assert(transpose_int64.rank == 2 && transpose_int64.elements == 10);
+  assert((transpose_int64.output_shape == std::vector<int64_t>{2, 5}));
+
+  const auto empty_transpose =
+      rvnpu::ValidateTransposeShape({1, 0}, {1, 0});
+  assert(empty_transpose.elements == 0);
+  assert((empty_transpose.output_shape == std::vector<int64_t>{0, 1}));
+
+  const auto reverse_slice = rvnpu::ValidateSliceShape(
+      {5, 2}, -1, std::numeric_limits<int64_t>::min() + 1, 0, -1);
+  assert(reverse_slice.start == 4 && reverse_slice.length == 5 &&
+         reverse_slice.step == -1);
+  assert((reverse_slice.output_shape == std::vector<int64_t>{5, 2}));
+
   const auto nms = rvnpu::ValidateNmsShapes(
       {1, 8400, 4}, {1, 80, 8400}, 300, {1});
   assert(nms.center_point_box == 1 && nms.num_boxes == 8400 &&
          nms.num_classes == 80);
 
+  const auto empty_nms =
+      rvnpu::ValidateNmsShapes({1, 0, 4}, {1, 1, 0}, 300, {});
+  assert(empty_nms.num_boxes == 0 && empty_nms.boxes_elements == 0 &&
+         empty_nms.scores_elements == 0);
+
   const auto topk = rvnpu::ValidateTopKShape({1, 8400, 80}, 1, {});
   assert(topk.rows == 8400 && topk.columns == 80 && topk.k == 1);
   assert((topk.output_shape == std::vector<int64_t>{1, 8400, 1}));
+
+  rvnpu::ArgMaxAttributes argmax_attributes;
+  argmax_attributes.axis = -1;
+  argmax_attributes.keepdims = 0;
+  const auto argmax =
+      rvnpu::ValidateArgMaxShape({1, 8400, 80}, argmax_attributes);
+  assert(argmax.rows == 8400 && argmax.columns == 80);
+  assert((argmax.output_shape == std::vector<int64_t>{1, 8400}));
+
+  const auto gather_nd =
+      rvnpu::ValidateGatherNdShape({8400}, {64, 1}, 0, sizeof(int64_t));
+  assert(gather_nd.tuple_count == 64 && gather_nd.tuple_size == 1 &&
+         gather_nd.slice_elements == 1 && gather_nd.output_elements == 64);
 
   rejected = false;
   try {

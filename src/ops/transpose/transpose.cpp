@@ -27,10 +27,13 @@ std::vector<int64_t> ReadTransposePerm(const Ort::ConstNode &node) {
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(Transpose, kOnnxDomain, 13,
-                    (Ort::KernelDefBuilder().AddTypeConstraint(
-                        "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
-                    TransposeKernel)
+RVNPU_DEFINE_KERNEL(
+    Transpose, kOnnxDomain, 13,
+    (Ort::KernelDefBuilder().AddTypeConstraint(
+        "T", std::vector<const OrtDataType *>{
+                 TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT),
+                 TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)})),
+    TransposeKernel)
 
 TransposeKernel::TransposeKernel(const OrtKernelInfo *info,
                                  DeviceContext *context)
@@ -58,12 +61,21 @@ OrtStatus *ORT_API_CALL TransposeKernel::ComputeImpl(
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
   const auto input_info = input.GetTensorTypeAndShapeInfo();
-  if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::invalid_argument("RVNPU Transpose requires FP32 input");
+  const auto input_type = input_info.GetElementType();
+  if (input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+      input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+    throw std::invalid_argument(
+        "RVNPU Transpose requires FP32 or INT64 input");
+  }
   const auto shape = ValidateTransposeShape(input_info.GetShape(), self.perm_);
   Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
-  self.context_->RunTranspose(input.GetTensorData<float>(),
-                              output.GetTensorMutableData<float>(), shape);
+  if (input_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+    self.context_->RunTranspose(input.GetTensorData<float>(),
+                                output.GetTensorMutableData<float>(), shape);
+  } else {
+    self.context_->RunTranspose(input.GetTensorData<int64_t>(),
+                                output.GetTensorMutableData<int64_t>(), shape);
+  }
   return nullptr;
   RVNPU_EXCEPTION_GUARD_END
 }

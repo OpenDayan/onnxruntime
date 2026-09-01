@@ -7,13 +7,14 @@
 ```text
 MatMul, Add, Mul, Sub, Div, Sigmoid, Conv, MaxPool,
 Concat, Split, Slice, Resize, Transpose, Softmax, ReduceMax, TopK,
-NonMaxSuppression, GatherND
+ArgMax, NonMaxSuppression, GatherND
 ```
 
 YOLOv8n 默认使用 Ultralytics 官方 `nms=True` ONNX，输出 FP32
 `[1,300,6]`，每行是 `x1、y1、x2、y2、score、class`。主网络中已支持的
-FP32 节点由 RVNPU 执行；官方后处理中的 ReduceMax、NMS 和两个 FP32 GatherND
-已接管，普通 Gather 和 INT64 控制节点暂由 ORT/CPU 执行。
+FP32 节点由 RVNPU 执行；官方后处理中的 ReduceMax、ArgMax、INT64 索引
+Transpose/Slice、NMS、两个 FP32 GatherND 和一个 INT64 GatherND 已接管。
+Greater、NonZero、三个静态零宽分支、普通 Gather 和小型控制节点由 ORT/CPU 执行。
 
 ## 1. 准备开发环境
 
@@ -94,6 +95,7 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh sub
 ./scripts/test_operator.sh div
 ./scripts/test_operator.sh sigmoid
+./scripts/test_operator.sh silu
 ./scripts/test_operator.sh conv
 ./scripts/test_operator.sh maxpool
 ./scripts/test_operator.sh concat
@@ -105,9 +107,10 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh reduce_max
 ./scripts/test_operator.sh topk
 ./scripts/test_operator.sh nms
+./scripts/test_operator.sh selection
 ```
 
-每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。NMS 测试还包含 `Split → Transpose → NMS → GatherND` YOLO 后处理子图。
+每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。`selection` 覆盖 ArgMax、INT64 GatherND、INT64 Transpose/Slice 和 Greater/NonZero 留 CPU 的空候选链路；NMS 测试还包含 `Split → Transpose → NMS → GatherND` 子图。
 
 ## 6. YOLOv8n 测试
 

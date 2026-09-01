@@ -66,10 +66,13 @@ Options Parse(int argc, char **argv) {
     throw std::invalid_argument("--kernel-elf, --op and --shape are required");
   }
   if (options.op != "add" && options.op != "mul" && options.op != "sub" &&
-      options.op != "div" && options.op != "sigmoid") {
-    throw std::invalid_argument("--op must be add, mul, sub, div or sigmoid");
+      options.op != "div" && options.op != "sigmoid" &&
+      options.op != "silu") {
+    throw std::invalid_argument(
+        "--op must be add, mul, sub, div, sigmoid or silu");
   }
-  if (options.op != "sigmoid" && options.rhs_shape.empty())
+  if (options.op != "sigmoid" && options.op != "silu" &&
+      options.rhs_shape.empty())
     options.rhs_shape = options.shape;
   return options;
 }
@@ -111,28 +114,34 @@ int main(int argc, char **argv) {
     const Options options = Parse(argc, argv);
     rvnpu::DeviceContext context(options.kernel_elf);
 
-    if (options.op == "sigmoid") {
+    if (options.op == "sigmoid" || options.op == "silu") {
       const auto shape =
-          rvnpu::ValidateUnaryTensorShape(options.shape, "Sigmoid");
+          rvnpu::ValidateUnaryTensorShape(options.shape, options.op.c_str());
       std::vector<float> input(shape.elements);
       std::vector<float> output(shape.elements);
       for (size_t index = 0; index < input.size(); ++index)
         input[index] = InputValue(index, 1);
-      context.RunSigmoid(input.data(), output.data(), shape);
+      if (options.op == "sigmoid")
+        context.RunSigmoid(input.data(), output.data(), shape);
+      else
+        context.RunSilu(input.data(), output.data(), shape);
       float maximum = 0.0f;
       for (size_t index = 0; index < output.size(); ++index) {
-        const float reference = 1.0f / (1.0f + std::exp(-input[index]));
+        const float sigmoid = 1.0f / (1.0f + std::exp(-input[index]));
+        const float reference =
+            options.op == "sigmoid" ? sigmoid : input[index] * sigmoid;
         maximum = std::max(maximum, std::abs(output[index] - reference));
         if (!std::isfinite(output[index]) ||
             std::abs(output[index] - reference) > 1e-4f) {
-          throw std::runtime_error("Sigmoid mismatch at element " +
+          throw std::runtime_error(options.op + " mismatch at element " +
                                    std::to_string(index) +
                                    ": input=" + std::to_string(input[index]) +
                                    " got=" + std::to_string(output[index]) +
                                    " reference=" + std::to_string(reference));
         }
       }
-      std::cout << "PASS op=Sigmoid shape=" << ShapeText(options.shape)
+      std::cout << "PASS op=" << options.op
+                << " shape=" << ShapeText(options.shape)
                 << " max_abs_diff=" << maximum << std::endl;
       return 0;
     }

@@ -1,6 +1,7 @@
 #include "ops/slice/slice.h"
 
 #include <stdexcept>
+#include <vector>
 
 namespace rvnpu {
 namespace {
@@ -30,8 +31,10 @@ int64_t ScalarInt64(const Ort::KernelContext &context, size_t index,
 RVNPU_DEFINE_KERNEL(
     Slice, kOnnxDomain, 13,
     (Ort::KernelDefBuilder()
-         .AddTypeConstraint("T",
-                            TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))
+         .AddTypeConstraint(
+             "T", std::vector<const OrtDataType *>{
+                      TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT),
+                      TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)})
          .AddTypeConstraint("Tind",
                             TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64))),
     SliceKernel)
@@ -61,8 +64,11 @@ OrtStatus *ORT_API_CALL SliceKernel::ComputeImpl(
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
   const auto input_info = input.GetTensorTypeAndShapeInfo();
-  if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::invalid_argument("RVNPU Slice requires FP32 input");
+  const auto input_type = input_info.GetElementType();
+  if (input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+      input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+    throw std::invalid_argument("RVNPU Slice requires FP32 or INT64 input");
+  }
   const int64_t start = ScalarInt64(kernel_context, 1, 0, true);
   const int64_t end = ScalarInt64(kernel_context, 2, 0, true);
   const int64_t axis = ScalarInt64(kernel_context, 3, 0, false);
@@ -70,8 +76,13 @@ OrtStatus *ORT_API_CALL SliceKernel::ComputeImpl(
   const auto shape =
       ValidateSliceShape(input_info.GetShape(), start, end, axis, step);
   Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
-  self.context_->RunSlice(input.GetTensorData<float>(),
-                          output.GetTensorMutableData<float>(), shape);
+  if (input_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+    self.context_->RunSlice(input.GetTensorData<float>(),
+                            output.GetTensorMutableData<float>(), shape);
+  } else {
+    self.context_->RunSlice(input.GetTensorData<int64_t>(),
+                            output.GetTensorMutableData<int64_t>(), shape);
+  }
   return nullptr;
   RVNPU_EXCEPTION_GUARD_END
 }

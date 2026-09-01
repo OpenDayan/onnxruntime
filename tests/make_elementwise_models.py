@@ -45,7 +45,9 @@ def make_case(directory: Path, op: str, shapes: list[list[int]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--op", choices=["add", "mul", "sub", "div", "sigmoid"], required=True
+        "--op",
+        choices=["add", "mul", "sub", "div", "sigmoid", "silu"],
+        required=True,
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -70,8 +72,47 @@ def main() -> None:
             "Div",
             [[1, 2, 16], [1]],
         )
-    else:
+    elif args.op == "sigmoid":
         make_case(args.output_dir / "supported", "Sigmoid", [[2, 3, 5]])
+    else:
+        shape = [1, 2, 3, 16]
+        for directory_name, mul_inputs in (
+            ("supported", ["input", "sigmoid"]),
+            ("supported_swapped", ["sigmoid", "input"]),
+        ):
+            directory = args.output_dir / directory_name
+            directory.mkdir(parents=True, exist_ok=True)
+            input_info = helper.make_tensor_value_info(
+                "input", TensorProto.FLOAT, shape
+            )
+            output_info = helper.make_tensor_value_info(
+                "output", TensorProto.FLOAT, shape
+            )
+            nodes = [
+                helper.make_node(
+                    "Sigmoid",
+                    ["input"],
+                    ["sigmoid"],
+                    name="rvnpu_test_sigmoid",
+                ),
+                helper.make_node(
+                    "Mul", mul_inputs, ["output"], name="rvnpu_test_mul"
+                ),
+            ]
+            graph = helper.make_graph(
+                nodes, "rvnpu_silu_fusion_test", [input_info], [output_info]
+            )
+            model = helper.make_model(
+                graph,
+                opset_imports=[helper.make_opsetid("", 13)],
+                producer_name="onnxruntime-rvnpu",
+            )
+            model.ir_version = 10
+            onnx.checker.check_model(model)
+            onnx.save(
+                shape_inference.infer_shapes(model), directory / "model.onnx"
+            )
+            values(shape, 1).tofile(directory / "input.bin")
 
 
 if __name__ == "__main__":

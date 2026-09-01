@@ -61,6 +61,7 @@ struct SliceShape {
   int32_t input_axis{};
   int32_t start{};
   int32_t length{};
+  int32_t step{};
   int32_t inner{};
   size_t input_elements{};
   size_t output_elements{};
@@ -94,6 +95,20 @@ struct SoftmaxShape {
 };
 
 struct ReduceMaxShape {
+  std::vector<int64_t> output_shape;
+  int32_t rows{};
+  int32_t columns{};
+  size_t input_elements{};
+  size_t output_elements{};
+};
+
+struct ArgMaxAttributes {
+  int64_t axis{0};
+  int64_t keepdims{1};
+  int64_t select_last_index{0};
+};
+
+struct ArgMaxShape {
   std::vector<int64_t> output_shape;
   int32_t rows{};
   int32_t columns{};
@@ -226,6 +241,23 @@ inline int32_t CheckedSizeDimension(size_t value, const char *label) {
   return static_cast<int32_t>(value);
 }
 
+inline int32_t CheckedNonNegativeDimension(int64_t value, const char *label) {
+  if (value < 0 || value > std::numeric_limits<int32_t>::max()) {
+    throw std::invalid_argument(std::string(label) +
+                                " must be in [0, INT32_MAX]");
+  }
+  return static_cast<int32_t>(value);
+}
+
+inline int32_t CheckedNonNegativeSizeDimension(size_t value,
+                                               const char *label) {
+  if (value > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+    throw std::invalid_argument(std::string(label) +
+                                " must be in [0, INT32_MAX]");
+  }
+  return static_cast<int32_t>(value);
+}
+
 inline size_t ShapeProduct(const std::vector<int64_t> &shape, size_t begin,
                            size_t end, const char *label) {
   size_t result = 1;
@@ -234,6 +266,19 @@ inline size_t ShapeProduct(const std::vector<int64_t> &shape, size_t begin,
                              static_cast<size_t>(CheckedDimension(shape[index],
                                                                   label)),
                              label);
+  }
+  return result;
+}
+
+inline size_t ShapeProductAllowZero(const std::vector<int64_t> &shape,
+                                    size_t begin, size_t end,
+                                    const char *label) {
+  size_t result = 1;
+  for (size_t index = begin; index < end; ++index) {
+    result = CheckedMultiply(
+        result,
+        static_cast<size_t>(CheckedNonNegativeDimension(shape[index], label)),
+        label);
   }
   return result;
 }
@@ -261,26 +306,27 @@ ValidateConcatShapes(const std::vector<std::vector<int64_t>> &inputs,
     if (input.size() != rank)
       throw std::invalid_argument("RVNPU Concat input ranks do not match");
     for (size_t dimension = 0; dimension < rank; ++dimension) {
-      CheckedDimension(input[dimension], "Concat");
+      CheckedNonNegativeDimension(input[dimension], "Concat");
       if (dimension != normalized_axis &&
           input[dimension] != inputs[0][dimension]) {
         throw std::invalid_argument("RVNPU Concat non-axis dimensions differ");
       }
     }
     result.input_axes.push_back(
-        CheckedDimension(input[normalized_axis], "Concat axis"));
+        CheckedNonNegativeDimension(input[normalized_axis], "Concat axis"));
     result.output_shape[normalized_axis] += input[normalized_axis];
   }
-  result.outer = CheckedSizeDimension(
-      ShapeProduct(inputs[0], 0, normalized_axis, "Concat outer"),
+  result.outer = CheckedNonNegativeSizeDimension(
+      ShapeProductAllowZero(inputs[0], 0, normalized_axis, "Concat outer"),
       "Concat outer");
-  result.inner = CheckedSizeDimension(
-      ShapeProduct(inputs[0], normalized_axis + 1, rank, "Concat inner"),
+  result.inner = CheckedNonNegativeSizeDimension(
+      ShapeProductAllowZero(inputs[0], normalized_axis + 1, rank,
+                            "Concat inner"),
       "Concat inner");
-  result.output_axis =
-      CheckedDimension(result.output_shape[normalized_axis], "Concat axis");
-  result.output_elements = ShapeProduct(result.output_shape, 0, rank,
-                                        "Concat output");
+  result.output_axis = CheckedNonNegativeDimension(
+      result.output_shape[normalized_axis], "Concat axis");
+  result.output_elements = ShapeProductAllowZero(
+      result.output_shape, 0, rank, "Concat output");
   return result;
 }
 
@@ -318,30 +364,51 @@ inline SplitShape ValidateSplitShape(const std::vector<int64_t> &input,
 inline SliceShape ValidateSliceShape(const std::vector<int64_t> &input,
                                      int64_t start, int64_t end, int64_t axis,
                                      int64_t step) {
-  if (input.empty() || input.size() > 4 || step != 1)
-    throw std::invalid_argument("RVNPU Slice requires rank-1..4 and step=1");
+  if (input.empty() || input.size() > 4 || (step != 1 && step != -1))
+    throw std::invalid_argument(
+        "RVNPU Slice requires rank-1..4 and step=1 or -1");
   const size_t normalized_axis = NormalizeAxis(axis, input.size(), "Slice");
-  const int64_t dimension = CheckedDimension(input[normalized_axis], "Slice axis");
-  int64_t normalized_start = start < 0 ? std::max<int64_t>(0, start + dimension)
-                                       : std::min(start, dimension);
-  int64_t normalized_end = end < 0 ? std::max<int64_t>(0, end + dimension)
-                                   : std::min(end, dimension);
-  if (normalized_end <= normalized_start)
-    throw std::invalid_argument("RVNPU Slice requires a non-empty range");
+  const int64_t dimension =
+      CheckedNonNegativeDimension(input[normalized_axis], "Slice axis");
+  int64_t normalized_start = 0;
+  int64_t normalized_end = 0;
+  int64_t length = 0;
+  if (step == 1) {
+    normalized_start =
+        start < 0 ? std::max<int64_t>(0, start + dimension)
+                  : std::min(start, dimension);
+    normalized_end = end < 0 ? std::max<int64_t>(0, end + dimension)
+                             : std::min(end, dimension);
+    length = std::max<int64_t>(0, normalized_end - normalized_start);
+  } else if (dimension != 0) {
+    normalized_start =
+        start < -dimension ? -1
+        : start < 0        ? start + dimension
+                           : std::min(start, dimension - 1);
+    normalized_end =
+        end < -dimension ? -1
+        : end < 0        ? end + dimension
+                         : std::min(end, dimension - 1);
+    length = std::max<int64_t>(0, normalized_start - normalized_end);
+  }
   SliceShape result;
   result.output_shape = input;
   result.start = static_cast<int32_t>(normalized_start);
-  result.length = static_cast<int32_t>(normalized_end - normalized_start);
+  result.length = static_cast<int32_t>(length);
+  result.step = static_cast<int32_t>(step);
   result.output_shape[normalized_axis] = result.length;
-  result.outer = CheckedSizeDimension(
-      ShapeProduct(input, 0, normalized_axis, "Slice outer"), "Slice outer");
-  result.inner = CheckedSizeDimension(
-      ShapeProduct(input, normalized_axis + 1, input.size(), "Slice inner"),
+  result.outer = CheckedNonNegativeSizeDimension(
+      ShapeProductAllowZero(input, 0, normalized_axis, "Slice outer"),
+      "Slice outer");
+  result.inner = CheckedNonNegativeSizeDimension(
+      ShapeProductAllowZero(input, normalized_axis + 1, input.size(),
+                            "Slice inner"),
       "Slice inner");
   result.input_axis = static_cast<int32_t>(dimension);
-  result.input_elements = ShapeProduct(input, 0, input.size(), "Slice input");
-  result.output_elements =
-      ShapeProduct(result.output_shape, 0, input.size(), "Slice output");
+  result.input_elements =
+      ShapeProductAllowZero(input, 0, input.size(), "Slice input");
+  result.output_elements = ShapeProductAllowZero(
+      result.output_shape, 0, input.size(), "Slice output");
   return result;
 }
 
@@ -371,17 +438,27 @@ ValidateResizeShape(const std::vector<int64_t> &input,
 
 inline TransposeShape ValidateTransposeShape(
     const std::vector<int64_t> &input, const std::vector<int64_t> &perm) {
+  const bool rank2 =
+      input.size() == 2 && perm == std::vector<int64_t>({1, 0});
   const bool rank3 =
       input.size() == 3 && perm == std::vector<int64_t>({0, 2, 1}) &&
       input[1] > 0 && input[1] <= 128 && input[2] > 0 &&
       input[2] % 16 == 0;
   const bool rank4 =
       input.size() == 4 && perm == std::vector<int64_t>({0, 2, 1, 3});
-  if (!rank3 && !rank4)
+  if (!rank2 && !rank3 && !rank4)
     throw std::invalid_argument(
-        "RVNPU Transpose requires rank-3 [N,C,K], C<=128, K divisible by 16 and perm [0,2,1], or rank-4 perm [0,2,1,3]");
+        "RVNPU Transpose requires rank-2 perm [1,0], rank-3 [N,C,K], C<=128, K divisible by 16 and perm [0,2,1], or rank-4 perm [0,2,1,3]");
   TransposeShape result;
   result.rank = static_cast<int32_t>(input.size());
+  if (rank2) {
+    result.dims[0] = CheckedNonNegativeDimension(input[0], "Transpose");
+    result.dims[1] = CheckedNonNegativeDimension(input[1], "Transpose");
+    result.output_shape = {input[1], input[0]};
+    result.elements =
+        ShapeProductAllowZero(input, 0, input.size(), "Transpose");
+    return result;
+  }
   for (size_t index = 0; index < input.size(); ++index)
     result.dims[index] = CheckedDimension(input[index], "Transpose");
   if (rank3) {
@@ -419,6 +496,38 @@ inline ReduceMaxShape ValidateReduceMaxShape(
     result.output_shape.back() = 1;
   result.input_elements = ShapeProduct(input, 0, input.size(), "ReduceMax");
   result.output_elements = static_cast<size_t>(result.rows);
+  return result;
+}
+
+inline ArgMaxShape ValidateArgMaxShape(
+    const std::vector<int64_t> &input,
+    const ArgMaxAttributes &attributes) {
+  if (input.empty() || input.size() > 4 ||
+      NormalizeAxis(attributes.axis, input.size(), "ArgMax") + 1 !=
+          input.size() ||
+      (attributes.keepdims != 0 && attributes.keepdims != 1) ||
+      attributes.select_last_index != 0) {
+    throw std::invalid_argument(
+        "RVNPU ArgMax requires static rank 1-4, last axis, keepdims 0 or 1 and select_last_index=0");
+  }
+  if (std::any_of(input.begin(), input.end(),
+                  [](int64_t dimension) { return dimension <= 0; })) {
+    throw std::invalid_argument("RVNPU ArgMax requires static dimensions");
+  }
+  ArgMaxShape result;
+  result.columns = CheckedDimension(input.back(), "ArgMax columns");
+  result.rows = CheckedSizeDimension(
+      ShapeProduct(input, 0, input.size() - 1, "ArgMax rows"),
+      "ArgMax rows");
+  result.output_shape = input;
+  if (attributes.keepdims == 0)
+    result.output_shape.pop_back();
+  else
+    result.output_shape.back() = 1;
+  result.input_elements = ShapeProduct(input, 0, input.size(), "ArgMax");
+  result.output_elements = static_cast<size_t>(result.rows);
+  CheckedMultiply(result.output_elements, sizeof(int64_t),
+                  "ArgMax output bytes");
   return result;
 }
 
@@ -474,10 +583,15 @@ inline UnaryTensorShape ValidateUnaryTensorShape(
   result.dims.fill(1);
   result.elements = 1;
   for (size_t index = 0; index < shape.size(); ++index) {
-    const int32_t dimension = CheckedDimension(shape[index], label);
+    if (shape[index] < 0 ||
+        shape[index] > std::numeric_limits<int32_t>::max()) {
+      throw std::invalid_argument(std::string(label) +
+                                  " has an invalid dimension");
+    }
+    const auto dimension = static_cast<uint32_t>(shape[index]);
     result.elements =
         CheckedMultiply(result.elements, static_cast<size_t>(dimension), label);
-    result.dims[shape.size() - 1 - index] = static_cast<uint32_t>(dimension);
+    result.dims[shape.size() - 1 - index] = dimension;
   }
   CheckedMultiply(result.elements, sizeof(float), label);
   return result;
@@ -499,7 +613,7 @@ inline BinaryElementwiseShape ValidateBinaryElementwiseShapes(
       throw std::invalid_argument(std::string(label) +
                                   " inputs are not broadcast-compatible");
     }
-    output[rank - 1 - offset] = std::max(lhs_dim, rhs_dim);
+    output[rank - 1 - offset] = lhs_dim == 1 ? rhs_dim : lhs_dim;
   }
 
   const bool lhs_is_output = lhs == output;
@@ -763,10 +877,11 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
   }
   NmsShape result;
   result.center_point_box = static_cast<int32_t>(attributes.center_point_box);
-  result.num_boxes = CheckedDimension(boxes[1], "NMS num_boxes");
+  result.num_boxes =
+      CheckedNonNegativeDimension(boxes[1], "NMS num_boxes");
   result.num_classes = CheckedDimension(scores[1], "NMS num_classes");
   const int32_t score_boxes =
-      CheckedDimension(scores[2], "NMS score num_boxes");
+      CheckedNonNegativeDimension(scores[2], "NMS score num_boxes");
   if (score_boxes != result.num_boxes || max_output_per_class <= 0) {
     throw std::invalid_argument(
         "RVNPU NMS requires matching boxes and a positive max output");
@@ -790,12 +905,13 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
 inline GatherNdShape
 ValidateGatherNdShape(const std::vector<int64_t> &data,
                       const std::vector<int64_t> &indices,
-                      int64_t batch_dims) {
+                      int64_t batch_dims,
+                      size_t element_size = sizeof(float)) {
   if (batch_dims != 0 || data.empty() || data.size() > 3 ||
       indices.size() != 2 || indices[1] <= 0 ||
       indices[1] > static_cast<int64_t>(data.size()) || indices[0] < 0) {
     throw std::invalid_argument(
-        "RVNPU GatherND requires FP32 rank 1-3 data, INT64 [K,D] indices and batch_dims=0");
+        "RVNPU GatherND requires rank 1-3 data, INT64 [K,D] indices and batch_dims=0");
   }
 
   GatherNdShape result;
@@ -823,10 +939,12 @@ ValidateGatherNdShape(const std::vector<int64_t> &data,
       static_cast<size_t>(result.index_depth), "GatherND indices");
   result.output_elements = CheckedMultiply(static_cast<size_t>(result.rows),
                                            output_width, "GatherND output");
-  CheckedMultiply(result.data_elements, sizeof(float), "GatherND data bytes");
+  if (element_size == 0)
+    throw std::invalid_argument("GatherND element size must be positive");
+  CheckedMultiply(result.data_elements, element_size, "GatherND data bytes");
   CheckedMultiply(result.indices_elements, sizeof(int64_t),
                   "GatherND indices bytes");
-  CheckedMultiply(result.output_elements, sizeof(float),
+  CheckedMultiply(result.output_elements, element_size,
                   "GatherND output bytes");
   return result;
 }

@@ -248,14 +248,27 @@ void WriteJson(const std::filesystem::path &path,
 
 size_t CheckAssignment(const Ort::Session &session) {
   std::unordered_map<std::string, size_t> counts;
+  size_t silu_fusions = 0;
+  size_t rvnpu_execution_units = 0;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     if (std::string(subgraph.GetEpName()) != kEpName)
       continue;
-    for (const auto &node : subgraph.GetNodes())
+    ++rvnpu_execution_units;
+    const auto nodes = subgraph.GetNodes();
+    bool has_sigmoid = false;
+    bool has_mul = false;
+    for (const auto &node : nodes) {
       ++counts[node.GetOperatorType()];
+      has_sigmoid = has_sigmoid || node.GetOperatorType() == "Sigmoid";
+      has_mul = has_mul || node.GetOperatorType() == "Mul";
+    }
+    if (nodes.size() == 2 && has_sigmoid && has_mul)
+      ++silu_fusions;
   }
-  if (counts["Conv"] != 64)
-    throw std::runtime_error("official YOLOv8n must assign 64 Conv nodes to RVNPU");
+  if (counts["Conv"] != 64) {
+    throw std::runtime_error(
+        "official YOLOv8n must assign 64 Conv nodes to RVNPU");
+  }
   std::vector<std::pair<std::string, size_t>> sorted(counts.begin(), counts.end());
   std::sort(sorted.begin(), sorted.end());
   size_t total = 0;
@@ -264,7 +277,8 @@ size_t CheckAssignment(const Ort::Session &session) {
     total += count;
     std::cout << ' ' << name << '=' << count;
   }
-  std::cout << std::endl;
+  std::cout << " SiluFusion=" << silu_fusions
+            << " ExecutionUnits=" << rvnpu_execution_units << std::endl;
   return total;
 }
 

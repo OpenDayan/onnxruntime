@@ -113,8 +113,10 @@ OrtStatus *ORT_API_CALL NonMaxSuppressionKernel::ComputeImpl(
   const std::vector<int64_t> output_shape{
       static_cast<int64_t>(selected.size() / 3), 3};
   Ort::UnownedValue output = kernel_context.GetOutput(0, output_shape);
-  std::copy(selected.begin(), selected.end(),
-            output.GetTensorMutableData<int64_t>());
+  if (!selected.empty()) {
+    std::copy(selected.begin(), selected.end(),
+              output.GetTensorMutableData<int64_t>());
+  }
   return nullptr;
   RVNPU_EXCEPTION_GUARD_END
 }

@@ -1,10 +1,13 @@
 #include "plugin/ep.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
+#include "ops/argmax/argmax.h"
 #include "ops/concat/concat.h"
 #include "ops/conv/conv.h"
 #include "ops/gather_nd/gather_nd.h"
@@ -67,6 +70,64 @@ bool IsNmsShapeCompatible(const std::vector<int64_t> &boxes,
   return boxes[1] <= 0 || scores[2] <= 0 || boxes[1] == scores[2];
 }
 
+class SiluNodeComputeInfo final : public OrtNodeComputeInfo {
+public:
+  explicit SiluNodeComputeInfo(DeviceContextPtr context)
+      : context_(std::move(context)) {
+    ort_version_supported = ORT_API_VERSION;
+    CreateState = CreateStateImpl;
+    Compute = ComputeImpl;
+    ReleaseState = ReleaseStateImpl;
+  }
+
+private:
+  static OrtStatus *ORT_API_CALL
+  CreateStateImpl(OrtNodeComputeInfo *compute_info, OrtNodeComputeContext *,
+                  void **compute_state) noexcept {
+    RVNPU_EXCEPTION_GUARD_BEGIN
+    if (compute_state == nullptr) {
+      return Ort::GetApi().CreateStatus(ORT_INVALID_ARGUMENT,
+                                        "SiLU compute state is null");
+    }
+    const auto &self = *static_cast<SiluNodeComputeInfo *>(compute_info);
+    *compute_state = new DeviceContextPtr(self.context_);
+    return nullptr;
+    RVNPU_EXCEPTION_GUARD_END
+  }
+
+  static OrtStatus *ORT_API_CALL ComputeImpl(
+      OrtNodeComputeInfo *, void *compute_state,
+      OrtKernelContext *kernel_context) noexcept {
+    RVNPU_EXCEPTION_GUARD_BEGIN
+    if (compute_state == nullptr) {
+      return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
+                                        "SiLU compute state is missing");
+    }
+    auto &context = **static_cast<DeviceContextPtr *>(compute_state);
+    Ort::KernelContext ort_context(kernel_context);
+    const Ort::ConstValue input = ort_context.GetInput(0);
+    const auto info = input.GetTensorTypeAndShapeInfo();
+    if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      throw std::invalid_argument("RVNPU fused SiLU requires FP32 input");
+    }
+    const auto shape =
+        ValidateUnaryTensorShape(info.GetShape(), "fused SiLU");
+    Ort::UnownedValue output =
+        ort_context.GetOutput(0, shape.output_shape);
+    context.RunSilu(input.GetTensorData<float>(),
+                    output.GetTensorMutableData<float>(), shape);
+    return nullptr;
+    RVNPU_EXCEPTION_GUARD_END
+  }
+
+  static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo *,
+                                             void *compute_state) noexcept {
+    delete static_cast<DeviceContextPtr *>(compute_state);
+  }
+
+  DeviceContextPtr context_;
+};
+
 } // namespace
 
 RvnpuEp::RvnpuEp(RvnpuEpFactory &factory, Config config,
@@ -79,8 +140,8 @@ RvnpuEp::RvnpuEp(RvnpuEpFactory &factory, Config config,
   GetName = GetNameImpl;
   GetCapability = GetCapabilityImpl;
   GetKernelRegistry = GetKernelRegistryImpl;
-  Compile = nullptr;
-  ReleaseNodeComputeInfos = nullptr;
+  Compile = CompileImpl;
+  ReleaseNodeComputeInfos = ReleaseNodeComputeInfosImpl;
   CreateProfiler = nullptr;
   Ort::ThrowOnError(CreateKernelRegistry(name_.c_str(), device_context_.get(),
                                          &kernel_registry_));
@@ -252,11 +313,21 @@ bool RvnpuEp::SupportsSlice(const Ort::ConstNode &node) {
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
     return false;
   const auto inputs = node.GetInputs();
-  if (inputs.size() < 3 || inputs.size() > 5 || !IsFloatTensor(inputs[0]))
+  if (inputs.size() < 3 || inputs.size() > 5)
+    return false;
+  const bool supported_data_type =
+      IsFloatTensor(inputs[0]) ||
+      IsTensorType(inputs[0], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  if (!supported_data_type)
     return false;
   for (size_t index = 1; index < inputs.size(); ++index) {
     if (inputs[index] != nullptr &&
         !IsTensorType(inputs[index], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64))
+      return false;
+  }
+  if (inputs.size() == 5) {
+    const auto step = ReadConstantInt64Scalar(inputs[4]);
+    if (!step || (*step != 1 && *step != -1))
       return false;
   }
   const auto input_shape = TensorShape(inputs[0]);
@@ -303,21 +374,32 @@ bool RvnpuEp::SupportsTranspose(const Ort::ConstNode &node) {
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
     return false;
   const auto inputs = node.GetInputs();
-  if (inputs.size() != 1 || !IsFloatTensor(inputs[0]))
+  if (inputs.size() != 1)
+    return false;
+  const bool is_float = IsFloatTensor(inputs[0]);
+  const bool is_int64 =
+      IsTensorType(inputs[0], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  if (!is_float && !is_int64)
     return false;
   const auto input_shape = TensorShape(inputs[0]);
   if (!input_shape)
     return false;
   try {
     const auto perm = ReadTransposePerm(node);
-    const bool rank3 = input_shape->size() == 3 &&
+    const bool rank2 = is_int64 && input_shape->size() == 2 &&
+                       perm == std::vector<int64_t>({1, 0});
+    const bool rank3 = is_float && input_shape->size() == 3 &&
                        perm == std::vector<int64_t>({0, 2, 1});
-    const bool rank4 = input_shape->size() == 4 &&
+    const bool rank4 = is_float && input_shape->size() == 4 &&
                        perm == std::vector<int64_t>({0, 2, 1, 3});
-    if (!rank3 && !rank4)
+    if (!rank2 && !rank3 && !rank4)
       return false;
+    if (rank2 && std::any_of(input_shape->begin(), input_shape->end(),
+                             [](int64_t dimension) { return dimension < 0; })) {
+      return true;
+    }
     if (std::all_of(input_shape->begin(), input_shape->end(),
-                    [](int64_t dimension) { return dimension > 0; }))
+                    [](int64_t dimension) { return dimension >= 0; }))
       static_cast<void>(ValidateTransposeShape(*input_shape, perm));
     return true;
   } catch (...) {
@@ -373,6 +455,29 @@ bool RvnpuEp::SupportsReduceMax(const Ort::ConstNode &node) {
   }
 }
 
+bool RvnpuEp::SupportsArgMax(const Ort::ConstNode &node) {
+  const auto domain = node.GetDomain();
+  if (node.GetOperatorType() != "ArgMax" ||
+      !(domain.empty() || domain == "ai.onnx") ||
+      node.GetSinceVersion() != 13)
+    return false;
+  const auto inputs = node.GetInputs();
+  const auto outputs = node.GetOutputs();
+  if (inputs.size() != 1 || outputs.size() != 1 ||
+      !IsFloatTensor(inputs[0]))
+    return false;
+  const auto input_shape = TensorShape(inputs[0]);
+  if (!input_shape)
+    return false;
+  try {
+    static_cast<void>(
+        ValidateArgMaxShape(*input_shape, ReadArgMaxAttributes(node)));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 bool RvnpuEp::SupportsSigmoid(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Sigmoid" ||
@@ -394,6 +499,39 @@ bool RvnpuEp::SupportsSigmoid(const Ort::ConstNode &node) {
   } catch (...) {
     return false;
   }
+}
+
+std::optional<Ort::ConstNode>
+RvnpuEp::MatchSiluPattern(const Ort::ConstNode &mul) {
+  if (!SupportsBinaryElementwise(mul, "Mul"))
+    return std::nullopt;
+  const auto mul_inputs = mul.GetInputs();
+  if (mul_inputs.size() != 2)
+    return std::nullopt;
+
+  for (size_t sigmoid_input_index = 0; sigmoid_input_index < 2;
+       ++sigmoid_input_index) {
+    const auto producer = mul_inputs[sigmoid_input_index].GetProducerNode();
+    if (producer.node == nullptr || !SupportsSigmoid(producer.node))
+      continue;
+    const auto sigmoid_inputs = producer.node.GetInputs();
+    const auto sigmoid_outputs = producer.node.GetOutputs();
+    if (sigmoid_inputs.size() != 1 || sigmoid_outputs.size() != 1 ||
+        sigmoid_inputs[0].GetName() !=
+            mul_inputs[1 - sigmoid_input_index].GetName() ||
+        sigmoid_outputs[0].GetName() !=
+            mul_inputs[sigmoid_input_index].GetName() ||
+        sigmoid_outputs[0].IsGraphOutput()) {
+      continue;
+    }
+    const auto consumers = sigmoid_outputs[0].GetConsumers();
+    if (consumers.size() != 1 || consumers[0].node == nullptr ||
+        consumers[0].node.GetId() != mul.GetId()) {
+      continue;
+    }
+    return producer.node;
+  }
+  return std::nullopt;
 }
 
 bool RvnpuEp::SupportsConv(const Ort::ConstNode &node) {
@@ -550,8 +688,12 @@ bool RvnpuEp::SupportsGatherNd(const Ort::ConstNode &node) {
   }
   const auto inputs = node.GetInputs();
   const auto outputs = node.GetOutputs();
-  if (inputs.size() != 2 || outputs.size() != 1 ||
-      !IsFloatTensor(inputs[0]) ||
+  if (inputs.size() != 2 || outputs.size() != 1)
+    return false;
+  const bool supported_data_type =
+      IsFloatTensor(inputs[0]) ||
+      IsTensorType(inputs[0], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  if (!supported_data_type ||
       !IsTensorType(inputs[1], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)) {
     return false;
   }
@@ -568,7 +710,11 @@ bool RvnpuEp::SupportsGatherNd(const Ort::ConstNode &node) {
   if ((*indices)[0] < 0)
     return true;
   try {
-    static_cast<void>(ValidateGatherNdShape(*data, *indices, 0));
+    static_cast<void>(ValidateGatherNdShape(
+        *data, *indices, 0,
+        IsTensorType(inputs[0], ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)
+            ? sizeof(int64_t)
+            : sizeof(float)));
     return true;
   } catch (...) {
     return false;
@@ -582,7 +728,26 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
   auto &ep = *static_cast<RvnpuEp *>(ep_ptr);
   Ort::ConstGraph graph{graph_ptr};
   const auto nodes = graph.GetNodes();
+  std::unordered_set<size_t> fused_node_ids;
+  if (ep.IsOperatorEnabled("Silu")) {
+    for (const auto &node : nodes) {
+      const auto sigmoid = MatchSiluPattern(node);
+      if (!sigmoid)
+        continue;
+      std::array<Ort::ConstNode, 2> fusion_nodes{*sigmoid, node};
+      OrtNodeFusionOptions fusion_options{};
+      fusion_options.ort_version_supported = ORT_API_VERSION;
+      RVNPU_RETURN_IF_ERROR(ep.ep_api_.EpGraphSupportInfo_AddNodesToFuse(
+          support_info,
+          reinterpret_cast<const OrtNode *const *>(fusion_nodes.data()),
+          fusion_nodes.size(), &fusion_options));
+      fused_node_ids.insert(sigmoid->GetId());
+      fused_node_ids.insert(node.GetId());
+    }
+  }
   for (const auto &node : nodes) {
+    if (fused_node_ids.count(node.GetId()) != 0)
+      continue;
     if (!ep.IsOperatorEnabled(node.GetOperatorType()))
       continue;
     const bool supported =
@@ -592,7 +757,7 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
         SupportsBinaryElementwise(node, "Div") || SupportsConcat(node) ||
         SupportsSplit(node) || SupportsSlice(node) || SupportsResize(node) ||
         SupportsTranspose(node) || SupportsSoftmax(node) ||
-        SupportsReduceMax(node) ||
+        SupportsReduceMax(node) || SupportsArgMax(node) ||
         SupportsSigmoid(node) || SupportsConv(node) || SupportsMaxPool(node) ||
         SupportsTopK(node) || SupportsNms(node) || SupportsGatherNd(node);
     if (!supported) {
@@ -608,6 +773,54 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
   }
   return nullptr;
   RVNPU_EXCEPTION_GUARD_END
+}
+
+OrtStatus *ORT_API_CALL RvnpuEp::CompileImpl(
+    OrtEp *ep_ptr, const OrtGraph **graph_ptrs, const OrtNode **fused_nodes,
+    size_t count, OrtNodeComputeInfo **node_compute_infos,
+    OrtNode **ep_context_nodes) noexcept {
+  RVNPU_EXCEPTION_GUARD_BEGIN
+  if (graph_ptrs == nullptr || fused_nodes == nullptr ||
+      node_compute_infos == nullptr) {
+    return Ort::GetApi().CreateStatus(ORT_INVALID_ARGUMENT,
+                                      "RVNPU Compile received null arrays");
+  }
+  auto &ep = *static_cast<RvnpuEp *>(ep_ptr);
+  for (size_t index = 0; index < count; ++index) {
+    Ort::ConstGraph graph{graph_ptrs[index]};
+    const auto nodes = graph.GetNodes();
+    const size_t sigmoid_count =
+        std::count_if(nodes.begin(), nodes.end(), [](const auto &node) {
+          return node.GetOperatorType() == "Sigmoid";
+        });
+    const size_t mul_count =
+        std::count_if(nodes.begin(), nodes.end(), [](const auto &node) {
+          return node.GetOperatorType() == "Mul";
+        });
+    Ort::ConstNode fused_node{fused_nodes[index]};
+    if (nodes.size() != 2 || sigmoid_count != 1 || mul_count != 1 ||
+        fused_node.GetInputs().size() != 1 ||
+        fused_node.GetOutputs().size() != 1 ||
+        fused_node.GetEpName() != ep.name_) {
+      return Ort::GetApi().CreateStatus(
+          ORT_EP_FAIL, "RVNPU Compile expected a Sigmoid+Mul SiLU subgraph");
+    }
+    node_compute_infos[index] =
+        new SiluNodeComputeInfo(ep.device_context_);
+    if (ep_context_nodes != nullptr)
+      ep_context_nodes[index] = nullptr;
+  }
+  return nullptr;
+  RVNPU_EXCEPTION_GUARD_END
+}
+
+void ORT_API_CALL RvnpuEp::ReleaseNodeComputeInfosImpl(
+    OrtEp *, OrtNodeComputeInfo **node_compute_infos,
+    size_t count) noexcept {
+  if (node_compute_infos == nullptr)
+    return;
+  for (size_t index = 0; index < count; ++index)
+    delete static_cast<SiluNodeComputeInfo *>(node_compute_infos[index]);
 }
 
 OrtStatus *ORT_API_CALL RvnpuEp::GetKernelRegistryImpl(

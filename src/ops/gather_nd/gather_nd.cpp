@@ -1,6 +1,7 @@
 #include "ops/gather_nd/gather_nd.h"
 
 #include <stdexcept>
+#include <vector>
 
 namespace rvnpu {
 namespace {
@@ -29,9 +30,10 @@ int64_t ReadGatherNdBatchDims(const Ort::ConstNode &node) {
 
 RVNPU_DEFINE_KERNEL(
     GatherND, kOnnxDomain, 13,
-    (Ort::KernelDefBuilder()
-         .AddTypeConstraint("T",
-                            TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
+    (Ort::KernelDefBuilder().AddTypeConstraint(
+        "T", std::vector<const OrtDataType *>{
+                 TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT),
+                 TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)})),
     GatherNdKernel)
 
 GatherNdKernel::GatherNdKernel(const OrtKernelInfo *info,
@@ -62,19 +64,27 @@ OrtStatus *ORT_API_CALL GatherNdKernel::ComputeImpl(
   const Ort::ConstValue indices = kernel_context.GetInput(1);
   const auto data_info = data.GetTensorTypeAndShapeInfo();
   const auto indices_info = indices.GetTensorTypeAndShapeInfo();
-  if (data_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-      indices_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+  const auto data_type = data_info.GetElementType();
+  if ((data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+       data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) ||
+      indices_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)
     throw std::invalid_argument(
-        "RVNPU GatherND requires FP32 data and INT64 indices");
-  }
+        "RVNPU GatherND requires FP32 or INT64 data and INT64 indices");
   const auto shape = ValidateGatherNdShape(
-      data_info.GetShape(), indices_info.GetShape(), self.batch_dims_);
+      data_info.GetShape(), indices_info.GetShape(), self.batch_dims_,
+      data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ? sizeof(int64_t)
+                                                       : sizeof(float));
   Ort::UnownedValue output =
       kernel_context.GetOutput(0, shape.output_shape);
-  if (shape.output_elements != 0) {
+  if (shape.output_elements != 0 &&
+      data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
     self.context_->RunGatherNd(data.GetTensorData<float>(),
                                indices.GetTensorData<int64_t>(),
                                output.GetTensorMutableData<float>(), shape);
+  } else if (shape.output_elements != 0) {
+    self.context_->RunGatherNd(data.GetTensorData<int64_t>(),
+                               indices.GetTensorData<int64_t>(),
+                               output.GetTensorMutableData<int64_t>(), shape);
   }
   return nullptr;
   RVNPU_EXCEPTION_GUARD_END

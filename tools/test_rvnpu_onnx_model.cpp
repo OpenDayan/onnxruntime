@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -93,26 +94,23 @@ Options Parse(int argc, char **argv) {
   return options;
 }
 
-std::vector<float> ReadFloats(const std::filesystem::path &path,
-                              size_t expected = 0) {
+std::vector<uint8_t> ReadBinary(const std::filesystem::path &path,
+                                size_t expected_bytes) {
   std::ifstream stream(path, std::ios::binary | std::ios::ate);
   if (!stream)
     throw std::runtime_error("cannot open data file: " + path.string());
   const auto bytes = stream.tellg();
-  if (bytes < 0 || bytes % static_cast<std::streamoff>(sizeof(float)) != 0)
-    throw std::runtime_error("invalid float data file: " + path.string());
-  std::vector<float> values(static_cast<size_t>(bytes) / sizeof(float));
+  if (bytes < 0 || static_cast<size_t>(bytes) != expected_bytes)
+    throw std::runtime_error("unexpected byte count: " + path.string());
+  std::vector<uint8_t> values(expected_bytes);
   stream.seekg(0, std::ios::beg);
-  if (!stream.read(reinterpret_cast<char *>(values.data()), bytes))
+  if (bytes != 0 &&
+      !stream.read(reinterpret_cast<char *>(values.data()), bytes))
     throw std::runtime_error("cannot read data file: " + path.string());
-  if (expected != 0 && values.size() != expected)
-    throw std::runtime_error("unexpected element count: " + path.string());
   return values;
 }
 
 size_t Elements(const std::vector<int64_t> &shape) {
-  if (shape.empty())
-    throw std::runtime_error("scalar tensors are not supported by this runner");
   size_t result = 1;
   for (const int64_t dimension : shape) {
     if (dimension <= 0)
@@ -122,33 +120,47 @@ size_t Elements(const std::vector<int64_t> &shape) {
   return result;
 }
 
-struct Input {
+size_t ElementSize(ONNXTensorElementDataType type) {
+  switch (type) {
+  case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+    return sizeof(float);
+  case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+    return sizeof(int64_t);
+  case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+    return sizeof(bool);
+  default:
+    throw std::runtime_error("operator runner supports only FP32, INT64 and "
+                             "BOOL tensors");
+  }
+}
+
+struct Tensor {
   std::string name;
   std::vector<int64_t> shape;
-  std::vector<float> data;
+  ONNXTensorElementDataType type;
+  std::vector<uint8_t> data;
 };
 
-std::vector<Input> LoadInputs(const Ort::Session &session,
-                              const std::filesystem::path &directory) {
+std::vector<Tensor> LoadInputs(const Ort::Session &session,
+                               const std::filesystem::path &directory) {
   Ort::AllocatorWithDefaultOptions allocator;
-  std::vector<Input> inputs;
+  std::vector<Tensor> inputs;
   for (size_t index = 0; index < session.GetInputCount(); ++index) {
     const auto name = session.GetInputNameAllocated(index, allocator);
     const auto type_info = session.GetInputTypeInfo(index);
     const auto info = type_info.GetTensorTypeAndShapeInfo();
-    if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-      throw std::runtime_error("operator runner only supports FP32 inputs");
-    Input input;
+    Tensor input;
     input.name = name.get();
     input.shape = info.GetShape();
-    input.data =
-        ReadFloats(directory / (input.name + ".bin"), Elements(input.shape));
+    input.type = info.GetElementType();
+    const size_t bytes = Elements(input.shape) * ElementSize(input.type);
+    input.data = ReadBinary(directory / (input.name + ".bin"), bytes);
     inputs.push_back(std::move(input));
   }
   return inputs;
 }
 
-std::vector<float> Run(Ort::Session &session, std::vector<Input> &inputs) {
+Tensor Run(Ort::Session &session, std::vector<Tensor> &inputs) {
   Ort::MemoryInfo memory =
       Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
   std::vector<const char *> input_names;
@@ -157,9 +169,9 @@ std::vector<float> Run(Ort::Session &session, std::vector<Input> &inputs) {
   input_values.reserve(inputs.size());
   for (auto &input : inputs) {
     input_names.push_back(input.name.c_str());
-    input_values.push_back(Ort::Value::CreateTensor<float>(
+    input_values.push_back(Ort::Value::CreateTensor(
         memory, input.data.data(), input.data.size(), input.shape.data(),
-        input.shape.size()));
+        input.shape.size(), input.type));
   }
 
   Ort::AllocatorWithDefaultOptions allocator;
@@ -171,11 +183,15 @@ std::vector<float> Run(Ort::Session &session, std::vector<Input> &inputs) {
   if (outputs.size() != 1)
     throw std::runtime_error("operator model must have exactly one output");
   const auto info = outputs[0].GetTensorTypeAndShapeInfo();
-  if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::runtime_error("operator runner only supports FP32 output");
-  const size_t count = info.GetElementCount();
-  const float *data = outputs[0].GetTensorData<float>();
-  return {data, data + count};
+  Tensor result;
+  result.name = output_name.get();
+  result.shape = info.GetShape();
+  result.type = info.GetElementType();
+  const size_t bytes = info.GetElementCount() * ElementSize(result.type);
+  const auto *data = static_cast<const uint8_t *>(outputs[0].GetTensorRawData());
+  if (bytes != 0)
+    result.data.assign(data, data + bytes);
+  return result;
 }
 
 struct Comparison {
@@ -183,24 +199,43 @@ struct Comparison {
   float max_error_percent;
 };
 
-Comparison Compare(const std::vector<float> &actual,
-                   const std::vector<float> &expected, float absolute,
+Comparison Compare(const Tensor &actual, const Tensor &expected, float absolute,
                    float relative, const std::string &label,
                    bool report_max_error_percent) {
-  if (actual.size() != expected.size())
-    throw std::runtime_error(label + " output size mismatch");
+  if (actual.type != expected.type)
+    throw std::runtime_error(label + " output type mismatch");
+  if (actual.shape != expected.shape)
+    throw std::runtime_error(label + " output shape mismatch");
+  if (actual.data.size() != expected.data.size())
+    throw std::runtime_error(label + " output byte size mismatch");
+  if (actual.type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+    const auto mismatch = std::mismatch(actual.data.begin(), actual.data.end(),
+                                        expected.data.begin());
+    if (mismatch.first != actual.data.end()) {
+      throw std::runtime_error(
+          label + " exact output mismatch at byte " +
+          std::to_string(std::distance(actual.data.begin(), mismatch.first)));
+    }
+    return {0.0f, 0.0f};
+  }
+
+  const size_t elements = actual.data.size() / sizeof(float);
+  const auto *actual_data = reinterpret_cast<const float *>(actual.data.data());
+  const auto *expected_data =
+      reinterpret_cast<const float *>(expected.data.data());
   float maximum = 0.0f;
   float maximum_reference = 0.0f;
-  size_t first_mismatch = actual.size();
-  for (size_t index = 0; index < actual.size(); ++index) {
-    if (!std::isfinite(actual[index]))
+  size_t first_mismatch = elements;
+  for (size_t index = 0; index < elements; ++index) {
+    if (!std::isfinite(actual_data[index]))
       throw std::runtime_error(label + " has non-finite output");
-    const float difference = std::abs(actual[index] - expected[index]);
+    const float difference =
+        std::abs(actual_data[index] - expected_data[index]);
     maximum = std::max(maximum, difference);
     maximum_reference =
-        std::max(maximum_reference, std::abs(expected[index]));
-    if (first_mismatch == actual.size() &&
-        difference > absolute + relative * std::abs(expected[index])) {
+        std::max(maximum_reference, std::abs(expected_data[index]));
+    if (first_mismatch == elements &&
+        difference > absolute + relative * std::abs(expected_data[index])) {
       first_mismatch = index;
     }
   }
@@ -209,11 +244,11 @@ Comparison Compare(const std::vector<float> &actual,
           ? (maximum == 0.0f ? 0.0f
                              : std::numeric_limits<float>::infinity())
           : maximum / maximum_reference * 100.0f;
-  if (first_mismatch != actual.size()) {
+  if (first_mismatch != elements) {
     std::string message =
         label + " mismatch at element " + std::to_string(first_mismatch) +
-        ": got=" + std::to_string(actual[first_mismatch]) +
-        " reference=" + std::to_string(expected[first_mismatch]) +
+        ": got=" + std::to_string(actual_data[first_mismatch]) +
+        " reference=" + std::to_string(expected_data[first_mismatch]) +
         " max_abs_diff=" + std::to_string(maximum);
     if (report_max_error_percent) {
       message +=

@@ -45,6 +45,7 @@ add_library(rvnpu_ep SHARED
   src/plugin/ep.cpp
   src/plugin/memory.cpp
   src/plugin/kernel_registry.cpp
+  src/ops/argmax/argmax.cpp
   src/ops/concat/concat.cpp
   src/ops/conv/conv.cpp
   src/ops/elementwise/elementwise.cpp

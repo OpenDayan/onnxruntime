@@ -125,6 +125,8 @@ void DeviceContext::RunBinaryElementwise(const char *operator_name,
                                          const float *lhs, const float *rhs,
                                          float *output,
                                          const BinaryElementwiseShape &shape) {
+  if (shape.output_elements == 0)
+    return;
   if (lhs == nullptr || rhs == nullptr || output == nullptr) {
     throw std::invalid_argument(std::string(operator_name) +
                                 " received a null tensor pointer");
@@ -184,12 +186,15 @@ void DeviceContext::RunDiv(const float *lhs, const float *rhs, float *output,
 
 void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
                               float *output, const ConcatShape &shape) {
-  if (inputs.size() != shape.input_axes.size() || output == nullptr ||
-      std::any_of(inputs.begin(), inputs.end(),
-                  [](const float *input) { return input == nullptr; })) {
+  if (inputs.size() != shape.input_axes.size()) {
     throw std::invalid_argument(
         "RVNPU Concat received invalid tensor pointers");
   }
+  if (shape.output_elements == 0)
+    return;
+  if (output == nullptr)
+    throw std::invalid_argument(
+        "RVNPU Concat received invalid tensor pointers");
   std::lock_guard<std::mutex> lock(mutex_);
   const size_t output_bytes = shape.output_elements * sizeof(float);
   DeviceBuffer device_output(runtime_, output_bytes);
@@ -198,6 +203,11 @@ void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
     const size_t elements = static_cast<size_t>(shape.outer) *
                             static_cast<size_t>(shape.input_axes[index]) *
                             static_cast<size_t>(shape.inner);
+    if (elements == 0)
+      continue;
+    if (inputs[index] == nullptr)
+      throw std::invalid_argument(
+          "RVNPU Concat received invalid tensor pointers");
     const size_t bytes = elements * sizeof(float);
     DeviceBuffer device_input(runtime_, bytes);
     device_input.CopyFromHost(inputs[index], bytes);
@@ -240,6 +250,8 @@ void DeviceContext::RunSplit(const float *input,
 
 void DeviceContext::RunSlice(const float *input, float *output,
                              const SliceShape &shape) {
+  if (shape.output_elements == 0)
+    return;
   if (input == nullptr || output == nullptr)
     throw std::invalid_argument("RVNPU Slice received a null tensor pointer");
   std::lock_guard<std::mutex> lock(mutex_);
@@ -252,7 +264,27 @@ void DeviceContext::RunSlice(const float *input, float *output,
                      " length=" + std::to_string(shape.length),
                      device_input.address(), device_output.address(),
                      shape.outer, shape.input_axis, shape.start, shape.length,
-                     shape.inner);
+                     shape.step, shape.inner);
+  device_output.CopyToHost(output, output_bytes);
+}
+
+void DeviceContext::RunSlice(const int64_t *input, int64_t *output,
+                             const SliceShape &shape) {
+  if (shape.output_elements == 0)
+    return;
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU Slice received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(int64_t);
+  const size_t output_bytes = shape.output_elements * sizeof(int64_t);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  LaunchKernelLocked("RVNPU Slice", kernels::kSliceInt64,
+                     " length=" + std::to_string(shape.length),
+                     device_input.address(), device_output.address(),
+                     shape.outer, shape.input_axis, shape.start, shape.length,
+                     shape.step, shape.inner);
   device_output.CopyToHost(output, output_bytes);
 }
 
@@ -298,6 +330,26 @@ void DeviceContext::RunTranspose(const float *input, float *output,
   device_output.CopyToHost(output, bytes);
 }
 
+void DeviceContext::RunTranspose(const int64_t *input, int64_t *output,
+                                 const TransposeShape &shape) {
+  if (shape.elements == 0)
+    return;
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument(
+        "RVNPU Transpose received a null tensor pointer");
+  if (shape.rank != 2)
+    throw std::invalid_argument("RVNPU INT64 Transpose requires rank 2");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t bytes = shape.elements * sizeof(int64_t);
+  DeviceBuffer device_input(runtime_, bytes);
+  DeviceBuffer device_output(runtime_, bytes);
+  device_input.CopyFromHost(input, bytes);
+  LaunchKernelLocked("RVNPU Transpose", kernels::kTranspose10Int64, "",
+                     device_input.address(), device_output.address(),
+                     shape.dims[0], shape.dims[1]);
+  device_output.CopyToHost(output, bytes);
+}
+
 void DeviceContext::RunSoftmax(const float *input, float *output,
                                const SoftmaxShape &shape) {
   if (input == nullptr || output == nullptr)
@@ -329,8 +381,26 @@ void DeviceContext::RunReduceMax(const float *input, float *output,
   device_output.CopyToHost(output, output_bytes);
 }
 
+void DeviceContext::RunArgMax(const float *input, int64_t *output,
+                              const ArgMaxShape &shape) {
+  if (input == nullptr || output == nullptr)
+    throw std::invalid_argument("RVNPU ArgMax received a null tensor pointer");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  const size_t output_bytes = shape.output_elements * sizeof(int64_t);
+  DeviceBuffer device_input(runtime_, input_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_input.CopyFromHost(input, input_bytes);
+  LaunchKernelLocked("RVNPU ArgMax", kernels::kArgMaxLastDimFp32, "",
+                     device_input.address(), device_output.address(),
+                     shape.rows, shape.columns);
+  device_output.CopyToHost(output, output_bytes);
+}
+
 void DeviceContext::RunSigmoid(const float *input, float *output,
                                const UnaryTensorShape &shape) {
+  if (shape.elements == 0)
+    return;
   if (input == nullptr || output == nullptr) {
     throw std::invalid_argument("RVNPU Sigmoid received a null tensor pointer");
   }
@@ -343,6 +413,27 @@ void DeviceContext::RunSigmoid(const float *input, float *output,
   const auto &dims = shape.dims;
   const std::string details = " elements=" + std::to_string(shape.elements);
   LaunchKernelLocked("RVNPU Sigmoid", kernels::kSigmoidFp32, details,
+                     device_input.address(), device_output.address(), dims[3],
+                     dims[2], dims[1], dims[0]);
+  device_output.CopyToHost(output, bytes);
+}
+
+void DeviceContext::RunSilu(const float *input, float *output,
+                            const UnaryTensorShape &shape) {
+  if (shape.elements == 0)
+    return;
+  if (input == nullptr || output == nullptr) {
+    throw std::invalid_argument("RVNPU SiLU received a null tensor pointer");
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t bytes = shape.elements * sizeof(float);
+  DeviceBuffer device_input(runtime_, bytes);
+  DeviceBuffer device_output(runtime_, bytes);
+  device_input.CopyFromHost(input, bytes);
+  const auto &dims = shape.dims;
+  const std::string details = " elements=" + std::to_string(shape.elements);
+  LaunchKernelLocked("RVNPU SiLU", kernels::kSiluFp32, details,
                      device_input.address(), device_output.address(), dims[3],
                      dims[2], dims[1], dims[0]);
   device_output.CopyToHost(output, bytes);
@@ -467,6 +558,8 @@ std::vector<int64_t> DeviceContext::RunNms(const float *boxes,
                                            float iou_threshold,
                                            float score_threshold,
                                            const NmsShape &shape) {
+  if (shape.num_boxes == 0)
+    return {};
   if (boxes == nullptr || scores == nullptr) {
     throw std::invalid_argument("RVNPU NMS received a null tensor pointer");
   }
@@ -539,6 +632,36 @@ void DeviceContext::RunGatherNd(const float *data, const int64_t *indices,
                               " depth=" +
                               std::to_string(shape.index_depth);
   LaunchKernelLocked("RVNPU GatherND", kernels::kGatherNdFp32, details,
+                     device_data.address(), device_indices.address(),
+                     device_output.address(), shape.rows, shape.index_depth,
+                     shape.data_dims[0], shape.data_dims[1],
+                     shape.data_dims[2]);
+  device_output.CopyToHost(output, output_bytes);
+}
+
+void DeviceContext::RunGatherNd(const int64_t *data, const int64_t *indices,
+                                int64_t *output,
+                                const GatherNdShape &shape) {
+  if (shape.rows == 0)
+    return;
+  if (data == nullptr || indices == nullptr || output == nullptr) {
+    throw std::invalid_argument("RVNPU GatherND received a null tensor pointer");
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const size_t data_bytes = shape.data_elements * sizeof(int64_t);
+  const size_t indices_bytes = shape.indices_elements * sizeof(int64_t);
+  const size_t output_bytes = shape.output_elements * sizeof(int64_t);
+  DeviceBuffer device_data(runtime_, data_bytes);
+  DeviceBuffer device_indices(runtime_, indices_bytes);
+  DeviceBuffer device_output(runtime_, output_bytes);
+  device_data.CopyFromHost(data, data_bytes);
+  device_indices.CopyFromHost(indices, indices_bytes);
+
+  const std::string details = " rows=" + std::to_string(shape.rows) +
+                              " depth=" +
+                              std::to_string(shape.index_depth);
+  LaunchKernelLocked("RVNPU GatherND", kernels::kGatherNdInt64, details,
                      device_data.address(), device_indices.address(),
                      device_output.address(), shape.rows, shape.index_depth,
                      shape.data_dims[0], shape.data_dims[1],

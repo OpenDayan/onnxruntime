@@ -2,20 +2,21 @@
 
 #include <array>
 
+#include "ops/argmax/argmax.h"
+#include "ops/concat/concat.h"
+#include "ops/conv/conv.h"
 #include "ops/elementwise/elementwise.h"
 #include "ops/gather_nd/gather_nd.h"
-#include "ops/concat/concat.h"
-#include "ops/slice/slice.h"
-#include "ops/split/split.h"
-#include "ops/resize/resize.h"
-#include "ops/reduce_max/reduce_max.h"
-#include "ops/transpose/transpose.h"
-#include "ops/softmax/softmax.h"
 #include "ops/matmul/matmul.h"
-#include "ops/nms/nms.h"
-#include "ops/conv/conv.h"
 #include "ops/maxpool/maxpool.h"
+#include "ops/nms/nms.h"
+#include "ops/reduce_max/reduce_max.h"
+#include "ops/resize/resize.h"
+#include "ops/slice/slice.h"
+#include "ops/softmax/softmax.h"
+#include "ops/split/split.h"
 #include "ops/topk/topk.h"
+#include "ops/transpose/transpose.h"
 
 namespace rvnpu {
 
@@ -25,7 +26,7 @@ const OrtDataType *TensorType(ONNXTensorElementDataType type) {
   return result;
 }
 
-static constexpr std::array<BuildKernelCreateInfoFn, 18> kBuilders = {
+static constexpr std::array<BuildKernelCreateInfoFn, 19> kBuilders = {
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         MatMul)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
@@ -50,6 +51,8 @@ static constexpr std::array<BuildKernelCreateInfoFn, 18> kBuilders = {
                                                         Softmax)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         ReduceMax)>,
+    BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
+                                                        ArgMax)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 13, 13,
                                                         Sigmoid)>,
     BuildKernelCreateInfo<class RVNPU_KERNEL_CLASS_NAME(kOnnxDomain, 11, 11,

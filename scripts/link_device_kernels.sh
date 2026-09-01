@@ -88,6 +88,7 @@ kernel_sources=(
   kernel_transpose.cpp
   kernel_softmax.cpp
   kernel_reduce_max.cpp
+  kernel_argmax.cpp
   kernel_im2col.cpp
   kernel_maxpool.cpp
   kernel_topk.cpp
