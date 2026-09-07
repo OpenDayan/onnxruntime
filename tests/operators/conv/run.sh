@@ -7,20 +7,21 @@ DIRECT_TEST="${ROOT_DIR}/build/linux/test_rvnpu_conv_maxpool"
 RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_onnx_model"
 PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"
 DATA="${ROOT_DIR}/build/operators/conv"
+REFERENCE="${RVNPU_CONV_REFERENCE:-fp32}"
 
 echo "[1/2] Direct kernel 数值测试"
 "${DIRECT_TEST}" --kernel-elf "${ELF}" --op conv \
   --input-shape 1,3,64,64 --weight-shape 16,3,3,3 \
-  --stride 2,2 --pad 1,1 --bias
+  --stride 2,2 --pad 1,1 --bias --reference "${REFERENCE}"
 "${DIRECT_TEST}" --kernel-elf "${ELF}" --op conv \
   --input-shape 1,16,32,32 --weight-shape 32,16,3,3 \
-  --stride 1,1 --pad 1,1
+  --stride 1,1 --pad 1,1 --reference "${REFERENCE}"
 "${DIRECT_TEST}" --kernel-elf "${ELF}" --op conv \
   --input-shape 1,64,20,20 --weight-shape 64,64,1,1 \
-  --stride 1,1 --pad 0,0 --bias
+  --stride 1,1 --pad 0,0 --bias --reference "${REFERENCE}"
 "${DIRECT_TEST}" --kernel-elf "${ELF}" --op conv \
   --input-shape 1,3,15,17 --weight-shape 5,3,3,3 \
-  --stride 2,2 --pad 1,1 --bias
+  --stride 2,2 --pad 1,1 --bias --reference "${REFERENCE}"
 
 echo
 echo "[2/2] ONNX Runtime 分配与数值测试"

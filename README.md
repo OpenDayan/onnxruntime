@@ -22,7 +22,6 @@ Greater、NonZero、三个静态零宽分支、普通 Gather 和小型控制节�
 
 ```text
 /workspace/onnxruntime-rvnpu   main
-/workspace/RVNPU-compiler      rvtv2/dev
 /workspace/npu-kernels         rvtv2/onnx
 /workspace/npu-runtime         rvtv2/stable
 /workspace/npu-firmware        rvtv2/stable
@@ -64,7 +63,6 @@ python3 -m pip install --user -r requirements.txt
 ```bash
 export ONNXRUNTIME_ROOT=/workspace/onnxruntime-rvnpu/build/ort-sdk
 export ONNXRUNTIME_LIB_DIR="$ONNXRUNTIME_ROOT/lib"
-export RVNPU_COMPILER_ROOT=/workspace/RVNPU-compiler
 export NPU_KERNELS_ROOT=/workspace/npu-kernels
 export NPU_RUNTIME_ROOT=/workspace/npu-runtime
 export NPU_QEMU_ROOT=/workspace/npu-qemu
@@ -97,6 +95,8 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh sigmoid
 ./scripts/test_operator.sh silu
 ./scripts/test_operator.sh conv
+# 使用 CPU BF16 reference 对照 Conv（默认仍为 FP32 reference）
+RVNPU_CONV_REFERENCE=bf16 ./scripts/test_operator.sh conv
 ./scripts/test_operator.sh maxpool
 ./scripts/test_operator.sh concat
 ./scripts/test_operator.sh split
@@ -109,6 +109,10 @@ build/device/device_build/rvnpu_kernels.elf
 ./scripts/test_operator.sh nms
 ./scripts/test_operator.sh selection
 ```
+
+`RVNPU_CONV_REFERENCE` 只切换 direct Conv 数值测试中的 CPU reference，不会修改
+ONNX Runtime 的 CPU EP；默认值为 `fp32`。`bf16` 模式保留 FP32 输出和累加，
+仅将输入、权重按已生成 Triton pack 阶段的规则取 FP32 高 16 位，转换为 BF16。
 
 每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。`selection` 覆盖 ArgMax、INT64 GatherND、INT64 Transpose/Slice 和 Greater/NonZero 留 CPU 的空候选链路；NMS 测试还包含 `Split → Transpose → NMS → GatherND` 子图。
 

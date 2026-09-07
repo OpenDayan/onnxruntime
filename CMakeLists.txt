@@ -139,3 +139,7 @@ enable_testing()
 add_executable(tensor_utils_test tests/tensor_utils_test.cpp)
 target_include_directories(tensor_utils_test PRIVATE src)
 add_test(NAME tensor_utils_test COMMAND tensor_utils_test)
+
+add_executable(cpu_reference_conv_test tests/cpu_reference_conv_test.cpp)
+target_include_directories(cpu_reference_conv_test PRIVATE src)
+add_test(NAME cpu_reference_conv_test COMMAND cpu_reference_conv_test)

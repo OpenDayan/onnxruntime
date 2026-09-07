@@ -1,3 +1,4 @@
+#include "runtime/cpu_reference.h"
 #include "runtime/device_context.h"
 #include "runtime/tensor_utils.h"
 
@@ -28,6 +29,7 @@ struct Options {
   std::vector<int64_t> kernel;
   std::vector<int64_t> stride{1, 1};
   std::vector<int64_t> pad{0, 0};
+  std::string reference{"fp32"};
   bool bias{};
 };
 
@@ -62,6 +64,8 @@ Options Parse(int argc, char **argv) {
       options.stride = ParseList(argv[++index]);
     else if (argument == "--pad" && index + 1 < argc)
       options.pad = ParseList(argv[++index]);
+    else if (argument == "--reference" && index + 1 < argc)
+      options.reference = argv[++index];
     else if (argument == "--bias")
       options.bias = true;
     else
@@ -75,6 +79,10 @@ Options Parse(int argc, char **argv) {
   }
   if (options.stride.size() != 2 || options.pad.size() != 2)
     throw std::invalid_argument("--stride and --pad require two values");
+  if (options.reference != "fp32" && options.reference != "bf16")
+    throw std::invalid_argument("--reference must be fp32 or bf16");
+  if (options.op == "maxpool" && options.reference != "fp32")
+    throw std::invalid_argument("--reference bf16 is only valid for Conv");
   if (options.input_shape.size() != 4)
     throw std::invalid_argument("--input-shape requires four values");
   if (options.op == "conv" && options.weight_shape.size() != 4)
@@ -224,8 +232,13 @@ int main(int argc, char **argv) {
         weight[index] = Value(index, 2);
       for (size_t index = 0; index < bias.size(); ++index)
         bias[index] = Value(index, 3);
-      ReferenceConv(input, weight, options.bias ? &bias : nullptr, reference,
-                    shape);
+      if (options.reference == "bf16") {
+        rvnpu::ConvBf16Reference(
+            input, weight, options.bias ? &bias : nullptr, reference, shape);
+      } else {
+        ReferenceConv(input, weight, options.bias ? &bias : nullptr, reference,
+                      shape);
+      }
       context.RunConv(input.data(), weight.data(),
                       options.bias ? bias.data() : nullptr, output.data(),
                       shape);
@@ -233,6 +246,7 @@ int main(int argc, char **argv) {
                 << " weight=" << ShapeText(options.weight_shape)
                 << " stride=" << ShapeText(options.stride)
                 << " pad=" << ShapeText(options.pad)
+                << " reference=" << options.reference
                 << " bias=" << (options.bias ? "yes" : "no")
                 << " max_abs_diff="
                 << Compare(output, reference, 2e-2f, 2e-2f)
