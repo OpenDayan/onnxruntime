@@ -31,6 +31,7 @@ struct Options {
   std::vector<int64_t> pad{0, 0};
   std::string reference{"fp32"};
   bool bias{};
+  bool fractional_input{};
 };
 
 std::vector<int64_t> ParseList(const std::string &text) {
@@ -68,6 +69,8 @@ Options Parse(int argc, char **argv) {
       options.reference = argv[++index];
     else if (argument == "--bias")
       options.bias = true;
+    else if (argument == "--fractional-input")
+      options.fractional_input = true;
     else
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
@@ -99,15 +102,17 @@ size_t Elements(const std::vector<int64_t> &shape) {
   return result;
 }
 
-float Value(size_t index, int salt) {
-  return static_cast<float>((static_cast<int>(index * 17 + salt * 13) % 37) -
-                            18) *
-         0.0625f;
+float Value(size_t index, int salt, bool fractional = false) {
+  const int integer = (static_cast<int>(index * 17 + salt * 13) % 37) - 18;
+  if (fractional)
+    return static_cast<float>(integer) / 61.0f;
+  return static_cast<float>(integer) * 0.0625f;
 }
 
 float Compare(const std::vector<float> &actual,
               const std::vector<float> &reference, float absolute,
               float relative) {
+
   if (actual.size() != reference.size())
     throw std::runtime_error("output size mismatch");
   float maximum = 0.0f;
@@ -209,7 +214,7 @@ int main(int argc, char **argv) {
     rvnpu::DeviceContext context(options.kernel_elf);
     std::vector<float> input(Elements(options.input_shape));
     for (size_t index = 0; index < input.size(); ++index)
-      input[index] = Value(index, 1);
+      input[index] = Value(index, 1, options.fractional_input);
 
     if (options.op == "conv") {
       rvnpu::ConvAttributes attributes;
@@ -229,9 +234,9 @@ int main(int argc, char **argv) {
       std::vector<float> output(shape.output_elements);
       std::vector<float> reference(shape.output_elements);
       for (size_t index = 0; index < weight.size(); ++index)
-        weight[index] = Value(index, 2);
+        weight[index] = Value(index, 2, options.fractional_input);
       for (size_t index = 0; index < bias.size(); ++index)
-        bias[index] = Value(index, 3);
+        bias[index] = Value(index, 3, options.fractional_input);
       if (options.reference == "bf16") {
         rvnpu::ConvBf16Reference(
             input, weight, options.bias ? &bias : nullptr, reference, shape);

@@ -1,7 +1,9 @@
 #include "onnxruntime_cxx_api.h"
+#include "runtime/cpu_reference.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,6 +22,7 @@ constexpr const char *kEpName = "RVNPUExecutionProvider";
 
 struct Options {
   std::string model;
+  std::string cpu_conv_reference{"fp32"};
   std::string plugin;
   std::string kernel_elf;
   std::filesystem::path data_dir;
@@ -62,6 +65,14 @@ Options Parse(int argc, char **argv) {
   if (!result.cpu_only && (result.plugin.empty() || result.kernel_elf.empty()))
     throw std::invalid_argument(
         "--plugin and --kernel-elf are required for RVNPU execution");
+  const char *cpu_reference = std::getenv("RVNPU_CONV_REFERENCE");
+  if (cpu_reference != nullptr && std::string(cpu_reference) != "")
+    result.cpu_conv_reference = cpu_reference;
+  if (result.cpu_conv_reference != "fp32" &&
+      result.cpu_conv_reference != "bf16") {
+    throw std::invalid_argument(
+        "RVNPU_CONV_REFERENCE must be fp32 or bf16");
+  }
   return result;
 }
 
@@ -89,6 +100,114 @@ size_t Elements(const std::vector<int64_t> &shape) {
   return result;
 }
 
+template <typename T>
+T KernelAttribute(const OrtKernelInfo *info, const char *name,
+                  T default_value) {
+  try {
+    return Ort::ConstKernelInfo{info}.GetAttribute<T>(name);
+  } catch (const Ort::Exception &) {
+    return default_value;
+  }
+}
+
+template <typename T>
+std::vector<T> KernelAttributeArray(const OrtKernelInfo *info,
+                                    const char *name,
+                                    std::vector<T> default_value) {
+  try {
+    return Ort::ConstKernelInfo{info}.GetAttributes<T>(name);
+  } catch (const Ort::Exception &) {
+    return default_value;
+  }
+}
+
+rvnpu::ConvAttributes ReadBf16ConvAttributes(const OrtKernelInfo *info) {
+  rvnpu::ConvAttributes result;
+  result.dilations =
+      KernelAttributeArray<int64_t>(info, "dilations", {1, 1});
+  result.kernel_shape =
+      KernelAttributeArray<int64_t>(info, "kernel_shape", {});
+  result.pads = KernelAttributeArray<int64_t>(info, "pads", {0, 0, 0, 0});
+  result.strides = KernelAttributeArray<int64_t>(info, "strides", {1, 1});
+  result.group = KernelAttribute<int64_t>(info, "group", 1);
+  result.auto_pad =
+      KernelAttribute<std::string>(info, "auto_pad", "NOTSET");
+  return result;
+}
+
+class Bf16ConvKernel {
+ public:
+  explicit Bf16ConvKernel(const OrtKernelInfo *info)
+      : attributes_(ReadBf16ConvAttributes(info)) {}
+
+  void Compute(OrtKernelContext *context) {
+    Ort::KernelContext kernel_context(context);
+    const Ort::ConstValue input = kernel_context.GetInput(0);
+    const Ort::ConstValue weight = kernel_context.GetInput(1);
+    const Ort::ConstValue bias = kernel_context.GetInputCount() == 3
+                                     ? kernel_context.GetInput(2)
+                                     : Ort::ConstValue{nullptr};
+    const auto input_shape = input.GetTensorTypeAndShapeInfo().GetShape();
+    const auto weight_shape = weight.GetTensorTypeAndShapeInfo().GetShape();
+    std::vector<int64_t> bias_shape;
+    if (bias != nullptr)
+      bias_shape = bias.GetTensorTypeAndShapeInfo().GetShape();
+    const auto shape = rvnpu::ValidateConvShapes(
+        input_shape, weight_shape,
+        bias == nullptr ? nullptr : &bias_shape, attributes_);
+    const float *input_data = input.GetTensorData<float>();
+    const float *weight_data = weight.GetTensorData<float>();
+    const float *bias_data =
+        bias == nullptr ? nullptr : bias.GetTensorData<float>();
+    std::vector<float> input_vector(input_data,
+                                    input_data + shape.input_elements);
+    std::vector<float> weight_vector(weight_data,
+                                     weight_data + shape.weight_elements);
+    std::vector<float> bias_vector;
+    if (bias_data != nullptr)
+      bias_vector.assign(bias_data, bias_data + shape.bias_elements);
+    std::vector<float> output_vector(shape.output_elements);
+    rvnpu::ConvBf16Reference(
+        input_vector, weight_vector,
+        bias_vector.empty() ? nullptr : &bias_vector, output_vector, shape);
+    Ort::UnownedValue output =
+        kernel_context.GetOutput(0, shape.output_shape);
+    std::copy(output_vector.begin(), output_vector.end(),
+              output.GetTensorMutableData<float>());
+  }
+
+ private:
+  rvnpu::ConvAttributes attributes_;
+};
+
+class Bf16ConvOp
+    : public Ort::CustomOpBase<Bf16ConvOp, Bf16ConvKernel> {
+ public:
+  Bf16ConvOp() {
+    start_ver_ = 11;
+    end_ver_ = 21;
+  }
+
+  const char *GetName() const { return "Conv"; }
+  void *CreateKernel(const OrtApi &, const OrtKernelInfo *info) const {
+    return new Bf16ConvKernel(info);
+  }
+  size_t GetInputTypeCount() const { return 3; }
+  ONNXTensorElementDataType GetInputType(size_t) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  }
+  OrtCustomOpInputOutputCharacteristic GetInputCharacteristic(
+      size_t index) const {
+    return index == 2
+               ? OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_OPTIONAL
+               : OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_REQUIRED;
+  }
+  size_t GetOutputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetOutputType(size_t) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  }
+};
+
 struct Detection {
   float x1;
   float y1;
@@ -106,15 +225,20 @@ std::vector<Detection> Run(Ort::Session &session, std::vector<float> &input) {
   const auto input_type = session.GetInputTypeInfo(0);
   const auto input_info = input_type.GetTensorTypeAndShapeInfo();
   const auto input_shape = input_info.GetShape();
+  const bool static_bchw = input_shape.size() == 4 && input_shape[0] == 1 &&
+                           input_shape[1] == 3 && input_shape[2] > 0 &&
+                           input_shape[3] > 0;
+  const bool stride_aligned = static_bchw && input_shape[2] % 32 == 0 &&
+                              input_shape[3] % 32 == 0;
   if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-      input_shape != std::vector<int64_t>{1, 3, 640, 640} ||
-      Elements(input_shape) != input.size()) {
+      !stride_aligned || Elements(input_shape) != input.size()) {
     std::string shape_text;
     for (const int64_t dimension : input_shape)
       shape_text += (shape_text.empty() ? "" : ",") +
                     std::to_string(dimension);
     throw std::runtime_error(
-        "official YOLOv8n input must be FP32 [1,3,640,640], got type=" +
+        "official YOLOv8n input must be static FP32 [1,3,H,W] with H/W "
+        "divisible by 32, got type=" +
         std::to_string(input_info.GetElementType()) + " shape=[" + shape_text +
         "] elements=" + std::to_string(input.size()));
   }
@@ -313,6 +437,14 @@ int main(int argc, char **argv) {
     }
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
+    Bf16ConvOp bf16_conv_op;
+    Ort::CustomOpDomain cpu_conv_domain("");
+    if (options.cpu_conv_reference == "bf16") {
+      cpu_conv_domain.Add(&bf16_conv_op);
+      cpu_options.Add(cpu_conv_domain);
+    }
+    std::cout << "cpu_conv_reference=" << options.cpu_conv_reference
+              << std::endl;
     Ort::Session cpu_session(env, options.model.c_str(), cpu_options);
     Ort::AllocatorWithDefaultOptions allocator;
     const auto input_name = cpu_session.GetInputNameAllocated(0, allocator);

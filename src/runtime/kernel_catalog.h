@@ -24,6 +24,8 @@ inline constexpr const char *kArgMaxLastDimFp32 = "argmax_lastdim_fp32";
 inline constexpr const char *kSigmoidFp32 = "sigmoid_f32";
 inline constexpr const char *kSiluFp32 = "silu_f32";
 inline constexpr const char *kIm2ColNchwFp32 = "im2col_nchw_fp32";
+inline constexpr const char *kIm2ColNchwFp32Padded =
+    "im2col_nchw_fp32_padded";
 inline constexpr const char *kMaxPool2dNchwFp32 = "maxpool2d_nchw_fp32";
 inline constexpr const char *kTopKLastDimFp32 = "topk_lastdim_fp32";
 inline constexpr const char *kNonMaxSuppressionFp32 =

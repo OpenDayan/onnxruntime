@@ -23,7 +23,11 @@ DeviceBuffer::DeviceBuffer(const NPURuntimeState &runtime, size_t bytes)
   if (bytes == 0) {
     throw std::invalid_argument("device allocation size must be positive");
   }
-  RequireSuccess(npu_runtime_malloc(runtime_, &address_, bytes),
+  // The hw-lab allocator does not align allocations. Keep the logical size for
+  // copies, but reserve an aligned block so a following int64_t output buffer
+  // cannot start at a misaligned address.
+  const size_t allocation_bytes = (bytes + 7U) & ~static_cast<size_t>(7U);
+  RequireSuccess(npu_runtime_malloc(runtime_, &address_, allocation_bytes),
                  "npu_runtime_malloc");
   if (address_ == 0) {
     throw std::runtime_error("npu_runtime_malloc returned address zero");

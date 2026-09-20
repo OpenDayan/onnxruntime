@@ -21,20 +21,22 @@ Greater、NonZero、三个静态零宽分支、普通 Gather 和小型控制节�
 项目在 RVNPU Linux 开发容器中构建。当前开发分支和默认目录如下：
 
 ```text
-/workspace/onnxruntime-rvnpu   main
-/workspace/npu-kernels         rvtv2/onnx
-/workspace/npu-runtime         rvtv2/stable
-/workspace/npu-firmware        rvtv2/stable
-/workspace/npu-qemu            rvtv2/stable
-/workspace/rvtng-cmodel        rvtv2/stable
-/workspace/NPU-Setup           rvtv2/stable
-/workspace/llvm-build          RVNPU LLVM 构建目录
+/workspace/onnxruntime-rvnpu                     main
+/workspace/npu-setup                             rvtv2/stable
+/workspace/npu-setup/workspace/npu-kernels       rvtv2/onnx
+/workspace/npu-setup/workspace/npu-runtime       rvtv2/stable
+/workspace/npu-setup/workspace/npu-firmware      rvtv2/stable
+/workspace/npu-setup/workspace/npu-qemu          rvtv2/stable
+/workspace/npu-setup/workspace/rvtng-cmodel      rvtv2/stable
+/workspace/triton-rvnpu                          rvtv2/stable
+/workspace/llvm-project/install                  Triton lowering 使用的 LLVM
+/opt/llvm                                        npu-kernels 编译使用的 LLVM
 ```
 
 全新环境先在 `NPU-Setup` 拉取依赖：
 
 ```bash
-cd /workspace/NPU-Setup
+cd /workspace/npu-setup
 ./1.init_repo.sh
 ```
 
@@ -63,12 +65,21 @@ python3 -m pip install --user -r requirements.txt
 ```bash
 export ONNXRUNTIME_ROOT=/workspace/onnxruntime-rvnpu/build/ort-sdk
 export ONNXRUNTIME_LIB_DIR="$ONNXRUNTIME_ROOT/lib"
-export NPU_KERNELS_ROOT=/workspace/npu-kernels
-export NPU_RUNTIME_ROOT=/workspace/npu-runtime
-export NPU_QEMU_ROOT=/workspace/npu-qemu
-export NPU_SETUP_ROOT=/workspace/NPU-Setup
-export LLVM_BUILD_DIR=/workspace/llvm-build
+export NPU_SETUP_ROOT=/workspace/npu-setup
+export NPU_WORKSPACE_DIR="$NPU_SETUP_ROOT/workspace"
+export NPU_KERNELS_ROOT="$NPU_WORKSPACE_DIR/npu-kernels"
+export NPU_RUNTIME_ROOT="$NPU_WORKSPACE_DIR/npu-runtime"
+export NPU_QEMU_ROOT="$NPU_WORKSPACE_DIR/npu-qemu"
+export RVNPU_COMPILER_ROOT=/workspace/triton-rvnpu/third_party/riscvnpu
+export RVNPU_COMPILER_REPO_ROOT=/workspace/triton-rvnpu
+export TRITON_BUILD_DIR=/workspace/triton-rvnpu/build
+export LLVM_BUILD_DIR=/workspace/llvm-project/install
+export DEVICE_LLVM_BUILD_DIR=/opt/llvm
 export PYTHON_EXECUTABLE=python3
+
+说明：`LLVM_BUILD_DIR` 用于 Triton lowering；`DEVICE_LLVM_BUILD_DIR`
+用于编译/链接 `npu-kernels/rvtv2/onnx` 中的 C/C++ device kernels。
+当前两套 LLVM 的 RVT headers/内建函数版本不同，不能混用。
 ```
 
 ## 4. 首次构建

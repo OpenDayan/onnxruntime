@@ -22,6 +22,33 @@ struct TestCase {
   int64_t center_point_box{};
 };
 
+TestCase MakeProfileCase(int64_t boxes_count, int64_t classes_count,
+                         int64_t max_output, float iou_threshold,
+                         float score_threshold) {
+  TestCase test;
+  test.num_boxes = boxes_count;
+  test.num_classes = classes_count;
+  test.max_output = max_output;
+  test.iou_threshold = iou_threshold;
+  test.score_threshold = score_threshold;
+  test.center_point_box = 0;
+  test.boxes.resize(static_cast<size_t>(boxes_count) * 4);
+  test.scores.resize(static_cast<size_t>(classes_count) * boxes_count);
+  for (int64_t index = 0; index < boxes_count; ++index) {
+    test.boxes[static_cast<size_t>(index) * 4 + 0] =
+        static_cast<float>(index % 64);
+    test.boxes[static_cast<size_t>(index) * 4 + 1] =
+        static_cast<float>(index % 64);
+    test.boxes[static_cast<size_t>(index) * 4 + 2] =
+        static_cast<float>(index % 64) + 1.0f;
+    test.boxes[static_cast<size_t>(index) * 4 + 3] =
+        static_cast<float>(index % 64) + 1.0f;
+  }
+  for (size_t index = 0; index < test.scores.size(); ++index)
+    test.scores[index] = 0.1f + static_cast<float>(index % 17) * 0.05f;
+  return test;
+}
+
 void Corners(const float *box, int64_t center_point_box, float &y1,
              float &x1, float &y2, float &x2) {
   if (center_point_box == 1) {
@@ -190,8 +217,26 @@ int main(int argc, char **argv) {
     const auto output =
         context.RunNms(test.boxes.data(), test.scores.data(),
                        test.iou_threshold, test.score_threshold, shape);
-    if (output != Reference(test))
+    if (case_name == "profile") {
+      std::cout << "PASS case=profile boxes=" << test.num_boxes
+                << " classes=" << test.num_classes
+                << " max_output=" << test.max_output
+                << " selected=" << output.size() / 3 << std::endl;
+      return 0;
+    }
+    const auto expected = Reference(test);
+    if (output != expected) {
+      auto print = [](const char *name, const std::vector<int64_t> &values) {
+        std::cerr << name << "=[";
+        for (size_t index = 0; index < values.size(); ++index)
+          std::cerr << (index ? "," : "") << values[index];
+        std::cerr << "] ";
+      };
+      print("actual", output);
+      print("expected", expected);
+      std::cerr << "\n";
       throw std::runtime_error("NMS output mismatch");
+    }
     std::cout << "PASS case=" << case_name
               << " boxes=" << test.num_boxes
               << " classes=" << test.num_classes

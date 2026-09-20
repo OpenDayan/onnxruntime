@@ -17,7 +17,18 @@ inline uint16_t FloatToBf16(float value) noexcept {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(value));
   std::memcpy(&bits, &value, sizeof(bits));
-  return static_cast<uint16_t>(bits >> 16);
+  if ((bits & 0x7f800000U) == 0x7f800000U)
+    return static_cast<uint16_t>((bits >> 16) | 0x007fU);
+  if ((bits & 0x7f800000U) == 0)
+    return static_cast<uint16_t>(bits >> 16);
+  uint32_t truncated = bits >> 16;
+  const uint32_t round_bit = (bits >> 15) & 1U;
+  const uint32_t sticky = bits & 0x7fffU;
+  if (round_bit != 0 && (sticky != 0 || (truncated & 1U) != 0))
+    ++truncated;
+  if ((truncated & 0x7f80U) == 0x7f80U)
+    truncated = (truncated & 0x8000U) | 0x7f80U;
+  return static_cast<uint16_t>(truncated);
 }
 
 inline float Bf16ToFloat(uint16_t value) noexcept {

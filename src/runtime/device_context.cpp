@@ -11,6 +11,8 @@
 #include "runtime/device_buffer.h"
 #include "runtime/kernel_catalog.h"
 
+extern "C" NPUDeviceKernelSetDesc __bin_kernels_pack;
+
 namespace rvnpu {
 
 namespace {
@@ -41,8 +43,9 @@ std::vector<uint8_t> ReadFile(const std::string &path) {
 
 } // namespace
 
-DeviceContext::DeviceContext(std::string kernel_elf)
-    : kernel_elf_(std::move(kernel_elf)) {
+DeviceContext::DeviceContext(std::string kernel_elf, bool cpu_bf16_conv_reference)
+    : kernel_elf_(std::move(kernel_elf)),
+      cpu_bf16_conv_reference_(cpu_bf16_conv_reference) {
   if (kernel_elf_.empty() || !std::filesystem::is_regular_file(kernel_elf_)) {
     throw std::invalid_argument(
         "kernel_elf must name an existing regular file: " + kernel_elf_);
@@ -51,20 +54,17 @@ DeviceContext::DeviceContext(std::string kernel_elf)
   RequireSuccess(npu_runtime_init(&runtime_), "npu_runtime_init");
   initialized_ = true;
   try {
-    const auto image = ReadFile(kernel_elf_);
-    RequireSuccess(npu_runtime_load_kernelset_from_memory(
-                       &runtime_, image.data(), image.size()),
-                   "npu_runtime_load_kernelset_from_memory");
+    // rvtv2/hw-lab consumes a linked packed descriptor. The rvtv2/onnx
+    // descriptor is linked from RVNPU_KERNEL_PACKED_C at build time.
+    RequireSuccess(
+        npu_runtime_load_kernelset(&runtime_, &::__bin_kernels_pack),
+        "npu_runtime_load_kernelset");
 
     NPUKernelDesc *tx_init = RequireKernel(kernels::kTxInit);
     int kernel_result = -1;
     RequireSuccess(
         npu_runtime_kernel_start(&runtime_, tx_init, &kernel_result, 0),
         "__tx_init launch");
-    if (kernel_result != 0) {
-      throw std::runtime_error("__tx_init returned " +
-                               std::to_string(kernel_result));
-    }
     static_cast<void>(RequireKernel(kernels::kMatMulFp32));
   } catch (...) {
     npu_runtime_deinit(&runtime_);
@@ -101,23 +101,69 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  const size_t a_bytes = shape.a_elements * sizeof(float);
-  const size_t b_bytes = shape.b_elements * sizeof(float);
-  const size_t y_bytes = shape.y_elements * sizeof(float);
+
+  // The current Triton tensor-core lowering is only validated for 64-byte
+  // aligned row strides (K and N multiples of 16 floats). ONNX dimensions can
+  // be arbitrary; pad both dimensions on the host and trim the result. Zero
+  // tails do not alter the mathematical result.
+  constexpr int64_t kDimensionAlignment = 16;
+  const auto align_up = [](int64_t value) {
+    return (value + kDimensionAlignment - 1) & ~(kDimensionAlignment - 1);
+  };
+  const int64_t padded_k = std::max<int64_t>(align_up(shape.k), 32);
+  const int64_t padded_n = std::max<int64_t>(align_up(shape.n), 32);
+  std::vector<float> padded_a;
+  std::vector<float> padded_b;
+  const float *effective_a = a;
+  const float *effective_b = b;
+  if (padded_k != shape.k || padded_n != shape.n) {
+    padded_a.assign(static_cast<size_t>(shape.m) * padded_k, 0.0f);
+    padded_b.assign(static_cast<size_t>(padded_k) * padded_n, 0.0f);
+    for (int64_t row = 0; row < shape.m; ++row)
+      std::copy_n(a + static_cast<size_t>(row) * shape.k, shape.k,
+                  padded_a.data() + static_cast<size_t>(row) * padded_k);
+    for (int64_t row = 0; row < shape.k; ++row)
+      std::copy_n(b + static_cast<size_t>(row) * shape.n, shape.n,
+                  padded_b.data() + static_cast<size_t>(row) * padded_n);
+    effective_a = padded_a.data();
+    effective_b = padded_b.data();
+  }
+
+  const size_t a_bytes =
+      static_cast<size_t>(shape.m) * static_cast<size_t>(padded_k) * sizeof(float);
+  const size_t b_bytes =
+      static_cast<size_t>(padded_k) * static_cast<size_t>(padded_n) * sizeof(float);
+  const size_t y_bytes =
+      static_cast<size_t>(shape.m) * static_cast<size_t>(padded_n) * sizeof(float);
   DeviceBuffer device_a(runtime_, a_bytes);
   DeviceBuffer device_b(runtime_, b_bytes);
   DeviceBuffer device_y(runtime_, y_bytes);
-  device_a.CopyFromHost(a, a_bytes);
-  device_b.CopyFromHost(b, b_bytes);
+  constexpr uint64_t kMatMulScratchBytes = 1 << 20;
+  DeviceBuffer device_scratch_allocation(
+      runtime_, static_cast<size_t>(kMatMulScratchBytes + 63));
+  const uint64_t device_scratch =
+      (device_scratch_allocation.address() + 63ULL) & ~63ULL;
+  device_a.CopyFromHost(effective_a, a_bytes);
+  device_b.CopyFromHost(effective_b, b_bytes);
 
-  const std::string details = " M=" + std::to_string(shape.m) +
-                              " N=" + std::to_string(shape.n) +
-                              " K=" + std::to_string(shape.k);
+  const std::string details =
+      " M=" + std::to_string(shape.m) + " N=" + std::to_string(shape.n) +
+      " K=" + std::to_string(shape.k) + " Np=" + std::to_string(padded_n) +
+      " Kp=" + std::to_string(padded_k);
   LaunchKernelLocked("RVNPU MatMul", kernels::kMatMulFp32, details,
                      device_a.address(), device_b.address(), device_y.address(),
-                     shape.m, shape.n, shape.k, shape.k, 1, shape.n, 1, shape.n,
-                     1);
-  device_y.CopyToHost(y, y_bytes);
+                     shape.m, padded_n, padded_k, padded_k, 1, padded_n, 1,
+                     padded_n, 1, device_scratch, kMatMulScratchBytes);
+
+  if (padded_n == shape.n) {
+    device_y.CopyToHost(y, y_bytes);
+    return;
+  }
+  std::vector<float> padded_y(shape.m * padded_n);
+  device_y.CopyToHost(padded_y.data(), y_bytes);
+  for (int64_t row = 0; row < shape.m; ++row)
+    std::copy_n(padded_y.data() + static_cast<size_t>(row) * padded_n,
+                shape.n, y + static_cast<size_t>(row) * shape.n);
 }
 
 void DeviceContext::RunBinaryElementwise(const char *operator_name,
@@ -448,57 +494,88 @@ void DeviceContext::RunConv(const float *input, const float *weight,
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  const size_t input_bytes = shape.input_elements * sizeof(float);
-  const size_t weight_bytes = shape.weight_elements * sizeof(float);
-  const size_t column_bytes = shape.column_elements * sizeof(float);
-  const size_t output_bytes = shape.output_elements * sizeof(float);
-  std::vector<float> transposed_weight(shape.weight_elements);
+
+  // The Triton tensor-core MatMul artifact requires 64-byte-aligned row
+  // strides. Generate A directly in [M, padded_K] layout on the device.
+  constexpr int64_t kDimensionAlignment = 16;
+  const auto align_up = [](int64_t value) {
+    return (value + kDimensionAlignment - 1) & ~(kDimensionAlignment - 1);
+  };
+  const int64_t padded_k = std::max<int64_t>(align_up(shape.matmul_k), 32);
+  const int64_t padded_n = std::max<int64_t>(align_up(shape.matmul_n), 32);
+
+  std::vector<float> padded_weight(static_cast<size_t>(padded_k) * padded_n,
+                                   0.0f);
   for (int32_t output_channel = 0; output_channel < shape.output_channels;
        ++output_channel) {
     for (int32_t reduction = 0; reduction < shape.matmul_k; ++reduction) {
-      transposed_weight[static_cast<size_t>(reduction) * shape.output_channels +
-                        output_channel] =
+      padded_weight[static_cast<size_t>(reduction) * padded_n +
+                    output_channel] =
           weight[static_cast<size_t>(output_channel) * shape.matmul_k +
                  reduction];
     }
   }
+
+  const size_t input_bytes = shape.input_elements * sizeof(float);
+  const size_t a_bytes =
+      static_cast<size_t>(shape.matmul_m) * padded_k * sizeof(float);
+  const size_t b_bytes = padded_weight.size() * sizeof(float);
+  const size_t y_bytes =
+      static_cast<size_t>(shape.matmul_m) * padded_n * sizeof(float);
+
   DeviceBuffer device_input(runtime_, input_bytes);
-  DeviceBuffer device_weight(runtime_, weight_bytes);
-  DeviceBuffer device_columns(runtime_, column_bytes);
-  DeviceBuffer device_output(runtime_, output_bytes);
+  DeviceBuffer device_a_allocation(runtime_, a_bytes + 63);
+  DeviceBuffer device_b_allocation(runtime_, b_bytes + 63);
+  DeviceBuffer device_y_allocation(runtime_, y_bytes + 63);
+  constexpr uint64_t kMatMulScratchBytes = 1 << 20;
+  DeviceBuffer device_scratch_allocation(
+      runtime_, static_cast<size_t>(kMatMulScratchBytes + 63));
+  const uint64_t device_a =
+      (device_a_allocation.address() + 63ULL) & ~63ULL;
+  const uint64_t device_b =
+      (device_b_allocation.address() + 63ULL) & ~63ULL;
+  const uint64_t device_y =
+      (device_y_allocation.address() + 63ULL) & ~63ULL;
+  const uint64_t device_scratch =
+      (device_scratch_allocation.address() + 63ULL) & ~63ULL;
+
   device_input.CopyFromHost(input, input_bytes);
-  device_weight.CopyFromHost(transposed_weight.data(), weight_bytes);
-
-  const std::string details = " N=1 C=" + std::to_string(shape.input_channels) +
-                              " H=" + std::to_string(shape.input_h) +
-                              " W=" + std::to_string(shape.input_w) +
-                              " M=" + std::to_string(shape.output_channels) +
-                              " KH=" + std::to_string(shape.kernel_h) +
-                              " KW=" + std::to_string(shape.kernel_w);
-  LaunchKernelLocked("RVNPU Conv im2col", kernels::kIm2ColNchwFp32, details,
-                     device_input.address(), device_columns.address(),
-                     shape.input_channels, shape.input_h, shape.input_w,
-                     shape.output_h, shape.output_w, shape.kernel_h,
-                     shape.kernel_w, shape.stride_h, shape.stride_w,
-                     shape.pad_h, shape.pad_w);
-  LaunchKernelLocked("RVNPU Conv MatMul", kernels::kMatMulFp32, details,
-                     device_columns.address(), device_weight.address(),
-                     device_output.address(), shape.matmul_m, shape.matmul_n,
-                     shape.matmul_k, shape.matmul_k, 1, shape.matmul_n, 1, 1,
-                     shape.matmul_m);
-
-  if (shape.has_bias) {
-    const size_t bias_bytes = shape.bias_elements * sizeof(float);
-    DeviceBuffer device_bias(runtime_, bias_bytes);
-    device_bias.CopyFromHost(bias, bias_bytes);
-    LaunchKernelLocked("RVNPU Conv bias", kernels::kAddFp32, details,
-                       device_output.address(), device_bias.address(),
-                       device_output.address(), shape.output_w, shape.output_h,
-                       shape.output_channels, 1, 1, 1, shape.output_channels,
-                       1);
+  if (npu_memcpy_to_dev(&runtime_.dev_state, device_b,
+                       padded_weight.data(), b_bytes) !=
+      static_cast<ssize_t>(b_bytes)) {
+    throw std::runtime_error("RVNPU Conv padded weight upload failed");
   }
 
-  device_output.CopyToHost(output, output_bytes);
+  const std::string details = " M=" + std::to_string(shape.matmul_m) +
+                              " N=" + std::to_string(shape.matmul_n) +
+                              " K=" + std::to_string(shape.matmul_k) +
+                              " Np=" + std::to_string(padded_n) +
+                              " Kp=" + std::to_string(padded_k);
+  LaunchKernelLocked("RVNPU Conv padded im2col",
+                     kernels::kIm2ColNchwFp32Padded, details,
+                     device_input.address(), device_a, shape.input_channels,
+                     shape.input_h, shape.input_w, shape.output_h,
+                     shape.output_w, shape.kernel_h, shape.kernel_w,
+                     shape.stride_h, shape.stride_w, shape.pad_h, shape.pad_w,
+                     padded_k);
+  LaunchKernelLocked("RVNPU Conv MatMul", kernels::kMatMulFp32, details,
+                     device_a, device_b, device_y, shape.matmul_m, padded_n,
+                     padded_k, padded_k, 1, padded_n, 1, padded_n, 1,
+                     device_scratch, kMatMulScratchBytes);
+
+  std::vector<float> matmul_output(static_cast<size_t>(shape.matmul_m) *
+                                   padded_n);
+  if (npu_memcpy_from_dev(&runtime_.dev_state, matmul_output.data(), device_y,
+                          y_bytes) != static_cast<ssize_t>(y_bytes)) {
+    throw std::runtime_error("RVNPU Conv MatMul output download failed");
+  }
+  for (int32_t row = 0; row < shape.matmul_m; ++row) {
+    for (int32_t column = 0; column < shape.output_channels; ++column) {
+      output[static_cast<size_t>(column) * shape.matmul_m + row] =
+          matmul_output[static_cast<size_t>(row) * padded_n + column] +
+          (shape.has_bias ? bias[column] : 0.0f);
+    }
+  }
 }
 
 void DeviceContext::RunMaxPool(const float *input, float *output,

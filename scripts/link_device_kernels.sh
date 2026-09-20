@@ -39,6 +39,7 @@ target_flags=(
 
 include_flags=(
   -I"${NPU_KERNELS_ROOT}/include"
+  -I/opt/riscv/riscv64-unknown-elf/include
   -I"${NPU_KERNELS_ROOT}/libs"
   -I"${NPU_KERNELS_ROOT}/kernel"
 )
@@ -53,14 +54,21 @@ for path in /usr/lib/picolibc/riscv64-unknown-elf/include \
   [[ -d "${path}" ]] && include_flags+=(-isystem "${path}")
 done
 
+clang_headers_dir="${LLVM_BUILD_DIR}/../clang/lib/Headers"
+[[ -d "${clang_headers_dir}" ]] &&
+  include_flags+=(-idirafter "${clang_headers_dir}")
+
 cxx_include_flags=()
-if [[ -d /usr/riscv64-linux-gnu/include/c++/12 ]]; then
+for cxx_root in /usr/riscv64-linux-gnu/include/c++/*; do
+  [[ -d "${cxx_root}" ]] || continue
   cxx_include_flags+=(
-    -isystem /usr/riscv64-linux-gnu/include/c++/12
-    -isystem /usr/riscv64-linux-gnu/include/c++/12/riscv64-linux-gnu
-    -isystem /usr/riscv64-linux-gnu/include/c++/12/backward
+    -isystem "${cxx_root}"
+    -isystem "${cxx_root}/riscv64-linux-gnu"
+    -isystem "${cxx_root}/backward"
   )
-else
+  break
+done
+if (( ${#cxx_include_flags[@]} == 0 )); then
   for candidate in /opt/riscv-tools/riscv64-unknown-elf/include/c++/*; do
     if [[ -d "${candidate}" ]]; then
       cxx_include_flags+=(-isystem "${candidate}")

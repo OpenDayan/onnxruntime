@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <chrono>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -16,7 +17,7 @@ namespace rvnpu {
 
 class DeviceContext {
 public:
-  explicit DeviceContext(std::string kernel_elf);
+  explicit DeviceContext(std::string kernel_elf, bool cpu_bf16_conv_reference = false);
   ~DeviceContext();
 
   DeviceContext(const DeviceContext &) = delete;
@@ -66,6 +67,21 @@ public:
   void RunGatherNd(const int64_t *data, const int64_t *indices,
                    int64_t *output, const GatherNdShape &shape);
   const std::string &kernel_elf() const noexcept { return kernel_elf_; }
+  bool cpu_bf16_conv_reference() const noexcept { return cpu_bf16_conv_reference_; }
+
+public:
+  struct ProfileRecord {
+    std::string operator_name;
+    std::string kernel_name;
+    std::string details;
+    uint64_t cycles{};
+    double wall_ms{};
+  };
+
+  const std::vector<ProfileRecord> &profile_records() const noexcept {
+    return profile_records_;
+  }
+  void ClearProfile() noexcept { profile_records_.clear(); }
 
 private:
   NPUKernelDesc *RequireKernel(const char *name);
@@ -80,9 +96,14 @@ private:
                   "device kernel arguments must convert to uint64_t");
     NPUKernelDesc *kernel = RequireKernel(kernel_name);
     int kernel_result = -1;
+    const auto wall_begin = std::chrono::steady_clock::now();
     const ssize_t runtime_result = npu_runtime_kernel_start(
         &runtime_, kernel, &kernel_result, sizeof...(Args),
         static_cast<uint64_t>(args)...);
+    const double wall_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - wall_begin)
+            .count();
     if (runtime_result != NPU_SUCCESS) {
       throw std::runtime_error(
           std::string(operator_name) + " launch failed: kernel=" + kernel_name +
@@ -93,12 +114,25 @@ private:
                                " device kernel=" + kernel_name + details +
                                " returned " + std::to_string(kernel_result));
     }
+    // Profiling kernels overwrite __perf_counter[0] with execution cycles.
+    uint64_t cycles = 0;
+    if (runtime_.kernel_set_desc.perf != 0 &&
+        npu_memcpy_from_dev(&runtime_.dev_state, &cycles,
+                            runtime_.kernel_set_desc.perf, sizeof(cycles)) ==
+            static_cast<ssize_t>(sizeof(cycles))) {
+      profile_records_.push_back(
+          {operator_name, kernel_name, details, cycles, wall_ms});
+    } else {
+      profile_records_.push_back({operator_name, kernel_name, details, 0, wall_ms});
+    }
   }
 
   std::string kernel_elf_;
+  bool cpu_bf16_conv_reference_ = false;
   NPURuntimeState runtime_{};
   bool initialized_{false};
   std::unordered_map<std::string, NPUKernelDesc *> kernels_;
+  std::vector<ProfileRecord> profile_records_;
   std::mutex mutex_;
 };
 

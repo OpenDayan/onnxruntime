@@ -9,6 +9,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime source or SDK root")
 set(ONNXRUNTIME_LIB_DIR "" CACHE PATH "Directory containing libonnxruntime")
 set(NPU_RUNTIME_ROOT "" CACHE PATH "npu-runtime repository root")
+set(RVNPU_KERNEL_PACKED_C "" CACHE FILEPATH "hw-lab packed kernelset C source")
 
 foreach(required_var ONNXRUNTIME_ROOT ONNXRUNTIME_LIB_DIR NPU_RUNTIME_ROOT)
   if(NOT ${required_var})
@@ -30,6 +31,13 @@ add_library(rvnpu_runtime_vendor STATIC
   "${NPU_RUNTIME_ROOT}/src/NPUDriver.c"
   "${NPU_RUNTIME_ROOT}/src/NPURuntime.c"
   "${NPU_RUNTIME_ROOT}/src/NPUMemoryManagement.cpp")
+option(RVNPU_KERNEL_PROFILING "Enable NPU kernel execution cycle profiling" OFF)
+if(RVNPU_KERNEL_PROFILING)
+  target_compile_definitions(rvnpu_runtime_vendor PRIVATE NPU_ENABLE_KERNEL_PROFILING=1)
+endif()
+if(RVNPU_KERNEL_PACKED_C)
+  target_sources(rvnpu_runtime_vendor PRIVATE "${RVNPU_KERNEL_PACKED_C}")
+endif()
 target_include_directories(rvnpu_runtime_vendor PUBLIC "${NPU_RUNTIME_ROOT}/include")
 target_link_libraries(rvnpu_runtime_vendor PUBLIC ${CMAKE_DL_LIBS} pthread)
 
@@ -130,7 +138,10 @@ set_target_properties(test_rvnpu_yolo_postprocess PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
 add_executable(test_rvnpu_yolov8n tools/test_rvnpu_yolov8n.cpp)
-target_include_directories(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+add_executable(test_rvnpu_yolo_perf tools/test_rvnpu_yolo_perf.cpp)
+target_include_directories(test_rvnpu_yolo_perf PRIVATE src "${NPU_RUNTIME_ROOT}/include")
+target_link_libraries(test_rvnpu_yolo_perf PRIVATE rvnpu_runtime_bridge)
+target_include_directories(test_rvnpu_yolov8n PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_yolov8n PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
