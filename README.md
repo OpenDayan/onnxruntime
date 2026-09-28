@@ -1,8 +1,8 @@
 # RVNPU ONNX Runtime Plugin EP
 
-本项目提供独立的 `RVNPUExecutionProvider`，不修改官方 ONNX Runtime。
+本项目提供独立的 `RVNPUExecutionProvider`,不修改官方 ONNX Runtime。
 
-当前支持标准 ONNX 算子：
+当前支持标准 ONNX 算子:
 
 ```text
 MatMul, Add, Mul, Sub, Div, Sigmoid, Conv, MaxPool,
@@ -10,162 +10,105 @@ Concat, Split, Slice, Resize, Transpose, Softmax, ReduceMax, TopK,
 ArgMax, NonMaxSuppression, GatherND
 ```
 
-YOLOv8n 默认使用 Ultralytics 官方 `nms=True` ONNX，输出 FP32
-`[1,300,6]`，每行是 `x1、y1、x2、y2、score、class`。主网络中已支持的
-FP32 节点由 RVNPU 执行；官方后处理中的 ReduceMax、ArgMax、INT64 索引
-Transpose/Slice、NMS、两个 FP32 GatherND 和一个 INT64 GatherND 已接管。
-Greater、NonZero、三个静态零宽分支、普通 Gather 和小型控制节点由 ORT/CPU 执行。
+设备内核为 `/workspace/dayan-base/demo/onnx/kernel_*.cpp`(含 conv 的
+im2col+matmul、elementwise、softmax 等),经 dycc 编译为 `.o` 后链接进 EP。
 
-## 1. 准备开发环境
+## 1. 环境要求
 
-项目在 RVNPU Linux 开发容器中构建。当前开发分支和默认目录如下：
+| 仓库 | 分支 | 用途 |
+|---|---|---|
+| `/workspace/onnxruntime-rvnpu` | `main` | 本仓库:EP 插件、runtime、测试工具 |
+| `/workspace/dayan-base` | `rvtv2/stable` | dayan 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
+| `/workspace/npu-cluster-sim` | `main`(测试实验版本为) | RTL 仿真器 TestCluster |
 
-```text
-/workspace/onnxruntime-rvnpu                     main
-/workspace/npu-setup                             rvtv2/stable
-/workspace/npu-setup/workspace/npu-kernels       rvtv2/onnx
-/workspace/npu-setup/workspace/npu-runtime       rvtv2/stable
-/workspace/npu-setup/workspace/npu-firmware      rvtv2/stable
-/workspace/npu-setup/workspace/npu-qemu          rvtv2/stable
-/workspace/npu-setup/workspace/rvtng-cmodel      rvtv2/stable
-/workspace/triton-rvnpu                          rvtv2/stable
-/workspace/llvm-project/install                  Triton lowering 使用的 LLVM
-/opt/llvm                                        npu-kernels 编译使用的 LLVM
-```
+## 2. 启动模拟器与 dayan_server
 
-全新环境先在 `NPU-Setup` 拉取依赖：
+测试工具不直接连 TestCluster,而是连 dayan_server 的 socket
+(`/tmp/dayan-server.sock`),由它加载固件并驱动仿真器:
 
 ```bash
-cd /workspace/npu-setup
-./1.init_repo.sh
+./scripts/start_sim.sh
 ```
 
-仓库已经位于 `/workspace` 时，不要重复执行。构建 emulator、QEMU 和 firmware：
+该脚本会清理旧实例、在 tmux 会话 `sim` 里启动 TestCluster 并开始仿真、
+拉起 dayan_server(core-mask=1 等必要参数已内置)。手动查看周期水位:
 
 ```bash
-./3.compile_emu.sh
-./4.compile_qemu.sh
-./5.compile_firmware.sh
+tmux capture-pane -t sim -p | grep -oE "Cycl[e]*[0-9]+" | tail -1
 ```
 
-测试脚本会自动启动和关闭 emulator，不需要手动运行 `6.0.run_emu.sh`。
+注意:
 
-## 2. 安装依赖
+- 单个 TestCluster 会话上限 **5000 万周期**,到顶即 `Verilator FAILED`
+  不可恢复,重新执行 `start_sim.sh` 即归零重启;
+
+## 3. 编译
+
+内核(改了 `demo/onnx/kernel_*.cpp` 或 dayan_intrinsics.h 后执行):
 
 ```bash
-cd /workspace/onnxruntime-rvnpu
-./scripts/fetch_onnxruntime_sdk.sh
-python3 -m pip install --user -r requirements.txt
+./scripts/build_dayan_kernels.sh
 ```
 
-脚本下载固定版本的 ONNX Runtime 1.26.0 C/C++ SDK，不需要另行 clone 官方 `onnxruntime` 仓库。
-
-## 3. 设置路径
+runtime 与测试工具(增量):
 
 ```bash
-export ONNXRUNTIME_ROOT=/workspace/onnxruntime-rvnpu/build/ort-sdk
-export ONNXRUNTIME_LIB_DIR="$ONNXRUNTIME_ROOT/lib"
-export NPU_SETUP_ROOT=/workspace/npu-setup
-export NPU_WORKSPACE_DIR="$NPU_SETUP_ROOT/workspace"
-export NPU_KERNELS_ROOT="$NPU_WORKSPACE_DIR/npu-kernels"
-export NPU_RUNTIME_ROOT="$NPU_WORKSPACE_DIR/npu-runtime"
-export NPU_QEMU_ROOT="$NPU_WORKSPACE_DIR/npu-qemu"
-export RVNPU_COMPILER_ROOT=/workspace/triton-rvnpu/third_party/riscvnpu
-export RVNPU_COMPILER_REPO_ROOT=/workspace/triton-rvnpu
-export TRITON_BUILD_DIR=/workspace/triton-rvnpu/build
-export LLVM_BUILD_DIR=/workspace/llvm-project/install
-export DEVICE_LLVM_BUILD_DIR=/opt/llvm
-export PYTHON_EXECUTABLE=python3
-
-说明：`LLVM_BUILD_DIR` 用于 Triton lowering；`DEVICE_LLVM_BUILD_DIR`
-用于编译/链接 `npu-kernels/rvtv2/onnx` 中的 C/C++ device kernels。
-当前两套 LLVM 的 RVT headers/内建函数版本不同，不能混用。
+cd build/dayan-migration && cmake . && make -j8
 ```
 
-## 4. 首次构建
+direct 测试需要 dummy ELF 参数(值无用):
 
 ```bash
-./scripts/run_e2e.sh
+export RVNPU_KERNEL_ELF=/tmp/dummy-kernel-elf && : > /tmp/dummy-kernel-elf
 ```
 
-它会构建 Plugin、生成包含全部 kernel 的 device ELF，并运行 MatMul/tiny CNN 回归。主要产物：
+## 4. 测试
 
-```text
-build/linux/librvnpu_ep.so
-build/device/device_build/rvnpu_kernels.elf
-```
-
-## 5. 单算子测试
+全量算子回归(direct + EP,19 算子):
 
 ```bash
-./scripts/test_operator.sh matmul
-./scripts/test_operator.sh add
-./scripts/test_operator.sh mul
-./scripts/test_operator.sh sub
-./scripts/test_operator.sh div
-./scripts/test_operator.sh sigmoid
-./scripts/test_operator.sh silu
-./scripts/test_operator.sh conv
-# 使用 CPU BF16 reference 对照 Conv（默认仍为 FP32 reference）
-RVNPU_CONV_REFERENCE=bf16 ./scripts/test_operator.sh conv
-./scripts/test_operator.sh maxpool
-./scripts/test_operator.sh concat
-./scripts/test_operator.sh split
-./scripts/test_operator.sh slice
-./scripts/test_operator.sh resize
-./scripts/test_operator.sh transpose
-./scripts/test_operator.sh softmax
-./scripts/test_operator.sh reduce_max
-./scripts/test_operator.sh topk
-./scripts/test_operator.sh nms
-./scripts/test_operator.sh selection
+export LD_LIBRARY_PATH=$PWD/build/ort-sdk/lib:$LD_LIBRARY_PATH
+bash scripts/run_dayan_tests.sh                 # 除 yolov8n* 外全部
+bash scripts/run_dayan_tests.sh <op> [<op> ...] # 指定算子
+bash scripts/run_dayan_tests.sh --direct-ops      # 小样本周期测量 + 整网外推
 ```
 
-`RVNPU_CONV_REFERENCE` 只切换 direct Conv 数值测试中的 CPU reference，不会修改
-ONNX Runtime 的 CPU EP；默认值为 `fp32`。`bf16` 模式保留 FP32 输出和累加，
-仅将输入、权重按已生成 Triton pack 阶段的规则取 FP32 高 16 位，转换为 BF16。
-
-每项测试包含 device kernel 数值测试，以及一次 ORT CPU/RVNPU 输出对比。程序会在内部确认目标节点确实分配给 RVNPU。`selection` 覆盖 ArgMax、INT64 GatherND、INT64 Transpose/Slice 和 Greater/NonZero 留 CPU 的空候选链路；NMS 测试还包含 `Split → Transpose → NMS → GatherND` 子图。
-
-## 6. YOLOv8n 测试
-
-首次导出模型前安装固定版本：
+算子矩阵(两网全部形状逐个直测,自动管理水位/重启):
 
 ```bash
-python3 -m pip install --user ultralytics==8.4.92
+nohup bash scripts/run_operator_matrix.sh \
+  > build/operator_matrix/nohup.log 2>&1 &
+tail -3 build/operator_matrix/run.log             # 进度
+python3 tools/gen_operator_matrix_table.py        # 生成总表
+# 结果:build/operator_matrix/results.csv
+#       build/operator_matrix/operator_matrix_table.md
 ```
 
-执行：
+单算子旧入口仍可用:
 
 ```bash
-./scripts/test_operator.sh yolov8n
+./scripts/test_operator.sh <op>
 ```
 
-模型为 opset 13、FP32、静态 `[1,3,640,640]`。准备阶段生成官方
-`nms=True` 模型 `build/yolov8n/yolov8n.onnx`，该命令默认运行主网络和官方
-后处理，输出 `[1,300,6]`。官方后处理中的未支持节点自动回退到 ORT/CPU。
+`RVNPU_CONV_REFERENCE=bf16` 可将 direct Conv 的 CPU reference 切为 BF16。
 
-NMS 的受限算子契约和小后处理子图继续由 `./scripts/test_operator.sh nms` 覆盖。
+周期测量注意:超时按 `实测周期 ÷ 仿真速度(~4-6k 周期/秒) × 1.5` 估,
+不拍脑袋;宿主机 load 高时仿真速度骤降,先 `uptime` 排除。
 
-指定真实图片测试并画框：
+## 5. YOLOv8n 测试
 
 ```bash
-./scripts/test_operator.sh yolov8n \
-  /home/dev/.local/lib/python3.10/site-packages/ultralytics/assets/bus.jpg
+./scripts/test_operator.sh yolov8n           # 官方 nms=True 模型(640)
+./scripts/test_operator.sh yolov8n_manual    # TopK(K=1) 手动优化后处理
 ```
 
-结果保存在 `build/yolov8n/image_results/`。
+整网未在仿真中跑通(周期需求 >100M,超单会话上限);64 输入缩小模型
+`build/yolov8n_64/yolov8n_64.onnx` 用于周期外推。
 
-手动优化版使用 `TopK(K=1)` 一次取得最高类别分数和类别编号，替代官方后处理中的
-`ReduceMax + ArgMax`，输出仍为 `[1,300,6]`：
+## 6. 已知限制
 
-```bash
-./scripts/test_operator.sh yolov8n_manual
-./scripts/test_operator.sh yolov8n_manual \
-  /home/dev/.local/lib/python3.10/site-packages/ultralytics/assets/bus.jpg
-```
-
-手动模型保存在 `build/yolov8n/yolov8n_manual.onnx`，图片结果保存在
-`build/yolov8n/manual_image_results/`。官方 `yolov8n.onnx` 不做修改。
-
-所有模型、SDK、ELF 和日志均生成在被忽略的 `build/` 中。
+- TestCluster 单会话 50M 周期上限,不可续;
+- conv 3×3 走标量 im2col(~80-100 周期/元素),大图在仿真中极慢;
+- 大空间/部分形状在宿主高负载时仿真近乎停滞(load>50 时建议暂停跑测试);
+- 设备 printf 会破坏 launch 完成,demo 内核不要用;
+- 所有模型、SDK、结果和日志均生成在被忽略的 `build/` 中。

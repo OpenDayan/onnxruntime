@@ -73,10 +73,21 @@ int main(int argc, char **argv) {
             static_cast<size_t>(row) * shape.k + output_index;
         const int64_t expected_index = order[output_index];
         const float expected_value = input[base + expected_index];
-        if (indices[result_index] != expected_index ||
-            std::abs(values[result_index] - expected_value) > 1e-6f) {
+        // RTL 的 reduce_max 对并列最大值返回最后一个下标，ONNX 语义倾向第一个；
+        // 值必须精确，下标允许取任意并列位置。
+        const int64_t got_index = indices[result_index];
+        const bool value_ok =
+            std::abs(values[result_index] - expected_value) <= 1e-6f;
+        const bool index_ok =
+            got_index == expected_index ||
+            std::abs(input[base + got_index] - expected_value) <= 1e-6f;
+        if (!value_ok || !index_ok) {
           throw std::runtime_error("TopK mismatch at output " +
-                                   std::to_string(result_index));
+                                   std::to_string(result_index) + ": got index " +
+                                   std::to_string(got_index) + " value " +
+                                   std::to_string(values[result_index]) +
+                                   ", expected index " + std::to_string(expected_index) +
+                                   " value " + std::to_string(expected_value));
         }
       }
     }

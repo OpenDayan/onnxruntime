@@ -8,10 +8,12 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime source or SDK root")
 set(ONNXRUNTIME_LIB_DIR "" CACHE PATH "Directory containing libonnxruntime")
-set(NPU_RUNTIME_ROOT "" CACHE PATH "npu-runtime repository root")
-set(RVNPU_KERNEL_PACKED_C "" CACHE FILEPATH "hw-lab packed kernelset C source")
+set(DAYAN_RUNTIME_ROOT "/workspace/dayan-base" CACHE PATH "dayan-base repository root")
+set(DAYAN_KERNEL_ROOT "/workspace/dayan-base" CACHE PATH "dayan-base repository root")
+set(DAYAN_KERNEL_OBJECT_DIR "${DAYAN_KERNEL_ROOT}/build/demo/onnx" CACHE PATH "dycc-generated ONNX kernel objects")
+file(GLOB DAYAN_KERNEL_OBJECTS "${DAYAN_KERNEL_OBJECT_DIR}/*.o")
 
-foreach(required_var ONNXRUNTIME_ROOT ONNXRUNTIME_LIB_DIR NPU_RUNTIME_ROOT)
+foreach(required_var ONNXRUNTIME_ROOT ONNXRUNTIME_LIB_DIR DAYAN_RUNTIME_ROOT DAYAN_KERNEL_ROOT)
   if(NOT ${required_var})
     message(FATAL_ERROR "${required_var} is required")
   endif()
@@ -27,25 +29,27 @@ if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
   message(FATAL_ERROR "Could not locate ONNX Runtime headers/library under the supplied paths")
 endif()
 
+if(NOT DAYAN_KERNEL_OBJECTS)
+  message(FATAL_ERROR "No dycc-generated Dayan ONNX kernel objects in ${DAYAN_KERNEL_OBJECT_DIR}")
+endif()
+
 add_library(rvnpu_runtime_vendor STATIC
-  "${NPU_RUNTIME_ROOT}/src/NPUDriver.c"
-  "${NPU_RUNTIME_ROOT}/src/NPURuntime.c"
-  "${NPU_RUNTIME_ROOT}/src/NPUMemoryManagement.cpp")
-option(RVNPU_KERNEL_PROFILING "Enable NPU kernel execution cycle profiling" OFF)
-if(RVNPU_KERNEL_PROFILING)
-  target_compile_definitions(rvnpu_runtime_vendor PRIVATE NPU_ENABLE_KERNEL_PROFILING=1)
-endif()
-if(RVNPU_KERNEL_PACKED_C)
-  target_sources(rvnpu_runtime_vendor PRIVATE "${RVNPU_KERNEL_PACKED_C}")
-endif()
-target_include_directories(rvnpu_runtime_vendor PUBLIC "${NPU_RUNTIME_ROOT}/include")
-target_link_libraries(rvnpu_runtime_vendor PUBLIC ${CMAKE_DL_LIBS} pthread)
+  ${DAYAN_KERNEL_OBJECTS})
+target_include_directories(rvnpu_runtime_vendor PUBLIC
+  "${DAYAN_RUNTIME_ROOT}/host/include")
+target_link_libraries(rvnpu_runtime_vendor PUBLIC
+  "${DAYAN_RUNTIME_ROOT}/build/host/driver/libDayanRuntime.a"
+  ${CMAKE_DL_LIBS} pthread)
+set_target_properties(rvnpu_runtime_vendor PROPERTIES LINKER_LANGUAGE CXX)
 
 add_library(rvnpu_runtime_bridge STATIC
   src/runtime/device_context.cpp
-  src/runtime/device_buffer.cpp)
-target_include_directories(rvnpu_runtime_bridge PUBLIC src "${NPU_RUNTIME_ROOT}/include")
+  src/runtime/device_buffer.cpp
+  src/runtime/dayan_context_impl.cpp)
+target_include_directories(rvnpu_runtime_bridge PUBLIC
+  src "${DAYAN_RUNTIME_ROOT}/host/include")
 target_link_libraries(rvnpu_runtime_bridge PUBLIC rvnpu_runtime_vendor)
+
 
 add_library(rvnpu_ep SHARED
   src/plugin/plugin_entry.cpp
@@ -154,3 +158,4 @@ add_test(NAME tensor_utils_test COMMAND tensor_utils_test)
 add_executable(cpu_reference_conv_test tests/cpu_reference_conv_test.cpp)
 target_include_directories(cpu_reference_conv_test PRIVATE src)
 add_test(NAME cpu_reference_conv_test COMMAND cpu_reference_conv_test)
+

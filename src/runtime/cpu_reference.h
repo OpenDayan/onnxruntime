@@ -117,4 +117,38 @@ inline void ConvBf16Reference(
   }
 }
 
+inline void MatMulBf16Reference(
+    const std::vector<float> &a, const std::vector<float> &b,
+    std::vector<float> &output, const MatMulShape &shape) {
+  if (a.size() != static_cast<size_t>(shape.a_elements)) {
+    throw std::invalid_argument("BF16 MatMul input size does not match shape");
+  }
+  if (b.size() != static_cast<size_t>(shape.b_elements)) {
+    throw std::invalid_argument("BF16 MatMul weight size does not match shape");
+  }
+
+  std::vector<uint16_t> a_bf16(a.size());
+  std::vector<uint16_t> b_bf16(b.size());
+  for (size_t index = 0; index < a.size(); ++index) {
+    a_bf16[index] = FloatToBf16(a[index]);
+  }
+  for (size_t index = 0; index < b.size(); ++index) {
+    b_bf16[index] = FloatToBf16(b[index]);
+  }
+
+  // Keep the same straightforward accumulation structure as the FP32
+  // reference; only the two operands are BF16.
+  output.assign(static_cast<size_t>(shape.y_elements), 0.0f);
+  for (int32_t m = 0; m < shape.m; ++m) {
+    for (int32_t n = 0; n < shape.n; ++n) {
+      float sum = 0.0f;
+      for (int32_t k = 0; k < shape.k; ++k) {
+        sum += Bf16ToFloat(a_bf16[static_cast<size_t>(m) * shape.k + k]) *
+               Bf16ToFloat(b_bf16[static_cast<size_t>(k) * shape.n + n]);
+      }
+      output[static_cast<size_t>(m) * shape.n + n] = sum;
+    }
+  }
+}
+
 } // namespace rvnpu

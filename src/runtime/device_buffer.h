@@ -3,32 +3,26 @@
 #include <cstddef>
 #include <cstdint>
 
-struct NPURuntimeState;
+#include "npu_runtime.h"
 
 namespace rvnpu {
 
-class DeviceBuffer {
+class DayanDeviceBuffer final {
 public:
-  DeviceBuffer(const NPURuntimeState &runtime, size_t bytes);
-  ~DeviceBuffer();
+  DayanDeviceBuffer() = default;
+  DayanDeviceBuffer(class DayanRuntime &runtime, size_t bytes,
+                    size_t alignment = 64);
+  ~DayanDeviceBuffer();
+  DayanDeviceBuffer(const DayanDeviceBuffer &) = delete;
+  DayanDeviceBuffer &operator=(const DayanDeviceBuffer &) = delete;
 
-  DeviceBuffer(const DeviceBuffer &) = delete;
-  DeviceBuffer &operator=(const DeviceBuffer &) = delete;
-  DeviceBuffer(DeviceBuffer &&other) noexcept;
-  DeviceBuffer &operator=(DeviceBuffer &&other) noexcept;
-
-  uint64_t address() const noexcept { return address_; }
+  npu_buffer_t *Get() const noexcept { return buffer_; }
   size_t size() const noexcept { return size_; }
 
-  void CopyFromHost(const void *source, size_t bytes);
-  void CopyToHost(void *destination, size_t bytes) const;
-
 private:
-  void Release() noexcept;
-
-  const NPURuntimeState *runtime_{};
-  uint64_t address_{};
-  size_t size_{};
+  npu_context_t *context_ = nullptr;
+  npu_buffer_t *buffer_ = nullptr;
+  size_t size_ = 0;
 };
 
 } // namespace rvnpu

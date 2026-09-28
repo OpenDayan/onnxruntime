@@ -1,5 +1,6 @@
 #include "runtime/device_context.h"
 #include "runtime/tensor_utils.h"
+#include "runtime/cpu_reference.h"
 
 #include <algorithm>
 #include <chrono>
@@ -87,16 +88,13 @@ std::vector<float> ReadFloats(const std::string &path, size_t expected) {
   return values;
 }
 
+// 参考值用 BF16 语义（与 cpu_reference.h 的 Conv 参考同一模式）：两个操作数先
+// 降到 BF16 再做 FP32 累加——设备路径正是这个精度语义。
 std::vector<float> ReferenceMatMul(const std::vector<float> &a,
                                    const std::vector<float> &b,
                                    const rvnpu::MatMulShape &shape) {
-  std::vector<float> reference(shape.y_elements, 0.0f);
-  for (int m = 0; m < shape.m; ++m)
-    for (int n = 0; n < shape.n; ++n)
-      for (int k = 0; k < shape.k; ++k)
-        reference[static_cast<size_t>(m) * shape.n + n] +=
-            a[static_cast<size_t>(m) * shape.k + k] *
-            b[static_cast<size_t>(k) * shape.n + n];
+  std::vector<float> reference;
+  rvnpu::MatMulBf16Reference(a, b, reference, shape);
   return reference;
 }
 

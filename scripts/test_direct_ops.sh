@@ -139,41 +139,78 @@ summarize() {
 import csv, json, math, sys
 from pathlib import Path
 out=Path(sys.argv[1]); size=int(sys.argv[2])
-manifest_path=Path(f'/workspace/onnxruntime-rvnpu/build/yolov8n_{size}/perf_manifest.json')
-manifest=json.loads(manifest_path.read_text())
+manifest=json.loads(Path(f'/workspace/onnxruntime-rvnpu/build/yolov8n_{size}/perf_manifest.json').read_text())
 entries=manifest['graph_entries']
 rows=[]
 for p in sorted(out.glob('group_*/operators.csv')):
     rows += list(csv.DictReader(p.open()))
 
 def elems(text): return math.prod(map(int,text.split('x'))) if text else 1
-result=[]; grand=0.0
+def shape_text(e):
+    op=e['op']
+    if op=='conv': return f"input={e['input']} weight={e['weight']} stride={e['stride']} pad={e['pad']}"
+    if op=='maxpool': return f"input={e['input']} kernel={e['kernel']} stride={e['stride']} pad={e['pad']}"
+    if op=='transpose': return f"input={e['input']} perm={e['perm']} output={e['output']}"
+    if op in ('add','mul','div'): return f"lhs={e.get('lhs')} rhs={e.get('rhs')} output={e.get('output')}"
+    if op=='resize': return f"input={e['input']} output={e['output']}"
+    if op in ('softmax','argmax','reduce_max'): return f"input={e['input']} output={e['output']}"
+    if op=='nms': return 'boxes=N,4 scores=C,N max_output=300'
+    return str(e)
+
 conv=next(r for r in rows if r['op']=='conv')
 conv_macs=8*8*64*3*3*64
 conv_rate=int(conv['cycles'])/conv_macs
-conv_total_macs=sum(e['m']*e['n']*e['k'] for e in entries if e['op']=='conv')
-conv_est=conv_total_macs*conv_rate; grand+=conv_est
-result.append({'op':'conv','sample_input':conv['input'],'sample_weight':conv['weight'],'sample_cycles':conv['cycles'],'graph_count':sum(1 for e in entries if e['op']=='conv'),'estimated_cycles':conv_est})
+rates={}
 for op in ['add','mul','sigmoid','div']:
     candidates=[r for r in rows if r['op']==op]
-    if not candidates: continue
-    sample=max(candidates,key=lambda r:int(r['cycles']))
-    rate=int(sample['cycles'])/elems(sample['input'])
-    total_elems=sum(elems('x'.join(map(str,e.get('input') or e.get('lhs')))) for e in entries if e['op']==op)
-    est=rate*total_elems; grand+=est
-    result.append({'op':op,'sample_input':sample['input'],'sample_weight':sample['weight'],'sample_cycles':sample['cycles'],'graph_count':sum(1 for e in entries if e['op']==op),'estimated_cycles':est})
-for op in ['maxpool','resize','transpose','nms','softmax','argmax','reduce_max']:
+    if candidates:
+        sample=max(candidates,key=lambda r:int(r['cycles']))
+        rates[op]=int(sample['cycles'])/elems(sample['input'])
+post_rates={}
+for op in ['maxpool','softmax','argmax','reduce_max']:
     candidates=[r for r in rows if r['op']==op]
-    if not candidates: continue
-    total_est=sum(int(r['cycles']) for r in candidates)
-    grand+=total_est
-    sample=max(candidates,key=lambda r:int(r['cycles']))
-    result.append({'op':op,'sample_input':sample['input'],'sample_weight':sample['weight'],'sample_cycles':sample['cycles'],'graph_count':sum(1 for e in entries if e['op']==op),'estimated_cycles':total_est})
-fields=['op','sample_input','sample_weight','sample_cycles','graph_count','estimated_cycles']
+    if candidates: post_rates[op]=int(max(candidates,key=lambda r:int(r['cycles']))['cycles'])
+resize_candidates=[r for r in rows if r['op']=='resize']
+resize_rate=sum(int(r['cycles']) for r in resize_candidates)/max(1,len(resize_candidates))
+transpose_candidates=[r for r in rows if r['op']=='transpose']
+transpose_cycles=int(max(transpose_candidates,key=lambda r:int(r['cycles']))['cycles']) if transpose_candidates else 0
+nms_sample=next(r for r in rows if r['op']=='nms')
+nms_cycles=int(nms_sample['cycles'])*((84*80)/(16*16))
+
+result=[]
+for op in sorted({e['op'] for e in entries}):
+    group=[e for e in entries if e['op']==op]
+    if op=='conv': est=sum(e['m']*e['n']*e['k'] for e in group)*conv_rate
+    elif op in rates: est=sum(elems('x'.join(map(str,e.get('input') or e.get('lhs')))) for e in group)*rates[op]
+    elif op in post_rates: est=len(group)*post_rates[op]
+    elif op=='resize': est=len(group)*resize_rate
+    elif op=='transpose': est=len(group)*transpose_cycles
+    elif op=='nms': est=len(group)*nms_cycles
+    else: continue
+    result.append({'op':op,'shape':f'count={len(group)}','count':len(group),'estimated_cycles':round(est,2)})
+result.append({'op':'TOTAL','shape':'','count':sum(r['count'] for r in result),'estimated_cycles':round(sum(float(r['estimated_cycles']) for r in result),2)})
 with (out/'estimated_total_cycles.csv').open('w',newline='') as f:
-    w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(result)
-print(f'TOTAL input_size={size} estimated_cycles={grand:.0f}')
+    w=csv.DictWriter(f,fieldnames=['op','shape','count','estimated_cycles']); w.writeheader(); w.writerows(result)
+
+shape_rows=[]
+groups={}
+for e in entries:
+    groups.setdefault((e['op'],shape_text(e)),[]).append(e)
+for (op,shape),group in groups.items():
+    if op=='conv': est=sum(e['m']*e['n']*e['k'] for e in group)*conv_rate
+    elif op in rates: est=sum(elems('x'.join(map(str,e.get('input') or e.get('lhs')))) for e in group)*rates[op]
+    elif op in post_rates: est=len(group)*post_rates[op]
+    elif op=='resize': est=len(group)*resize_rate
+    elif op=='transpose': est=len(group)*transpose_cycles
+    elif op=='nms': est=len(group)*nms_cycles
+    else: continue
+    shape_rows.append({'op':op,'shape':shape,'count':len(group),'estimated_cycles':round(est,2)})
+shape_rows.append({'op':'TOTAL','shape':'','count':sum(r['count'] for r in shape_rows),'estimated_cycles':round(sum(float(r['estimated_cycles']) for r in shape_rows),2)})
+with (out/'estimated_operator_cycles.csv').open('w',newline='') as f:
+    w=csv.DictWriter(f,fieldnames=['op','shape','count','estimated_cycles']); w.writeheader(); w.writerows(shape_rows)
+print(f'TOTAL input_size={size} estimated_cycles={sum(float(r["estimated_cycles"]) for r in result[:-1]):.0f}')
 print(out/'estimated_total_cycles.csv')
+print(out/'estimated_operator_cycles.csv')
 PY
 }
 
