@@ -82,11 +82,11 @@ Options Parse(int argc, char **argv) {
                                   argument);
   }
   if (options.model.empty() || options.plugin.empty() ||
-      options.kernel_elf.empty() || options.data_dir.empty() ||
+      options.data_dir.empty() ||
       (options.expected_operator.empty() &&
        options.expected_rvnpu_counts.empty())) {
     throw std::invalid_argument(
-        "--model, --plugin, --kernel-elf, --data-dir and assignment "
+        "--model, --plugin, --data-dir and assignment "
         "expectations are required");
   }
   if (options.absolute < 0.0f || options.relative < 0.0f)

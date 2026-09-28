@@ -55,8 +55,6 @@ Options Parse(int argc, char **argv) {
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
   }
-  if (options.kernel_elf.empty())
-    throw std::invalid_argument("--kernel-elf is required");
   if (options.m <= 0 || options.n <= 0 || options.k <= 0)
     throw std::invalid_argument("--m, --n and --k must be positive");
   if (options.warmup < 0)

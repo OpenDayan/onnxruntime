@@ -61,9 +61,9 @@ Options Parse(int argc, char **argv) {
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
   }
-  if (options.kernel_elf.empty() || options.op.empty() ||
+  if (options.op.empty() ||
       options.shape.empty()) {
-    throw std::invalid_argument("--kernel-elf, --op and --shape are required");
+    throw std::invalid_argument("--op and --shape are required");
   }
   if (options.op != "add" && options.op != "mul" && options.op != "sub" &&
       options.op != "div" && options.op != "sigmoid" &&

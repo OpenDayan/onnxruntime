@@ -64,7 +64,7 @@ Options Parse(int argc, char **argv) {
     throw std::invalid_argument("CPU-only and assignment-only are exclusive");
   if (!result.cpu_only && (result.plugin.empty() || result.kernel_elf.empty()))
     throw std::invalid_argument(
-        "--plugin and --kernel-elf are required for RVNPU execution");
+        "--plugin and  for RVNPU execution");
   const char *cpu_reference = std::getenv("RVNPU_CONV_REFERENCE");
   if (cpu_reference != nullptr && std::string(cpu_reference) != "")
     result.cpu_conv_reference = cpu_reference;

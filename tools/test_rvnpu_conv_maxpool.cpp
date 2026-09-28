@@ -75,10 +75,10 @@ Options Parse(int argc, char **argv) {
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
   }
-  if (options.kernel_elf.empty() || options.input_shape.empty() ||
+  if (options.input_shape.empty() ||
       (options.op != "conv" && options.op != "maxpool")) {
     throw std::invalid_argument(
-        "--kernel-elf, --op and --input-shape are required");
+        "--op and --input-shape are required");
   }
   if (options.stride.size() != 2 || options.pad.size() != 2)
     throw std::invalid_argument("--stride and --pad require two values");

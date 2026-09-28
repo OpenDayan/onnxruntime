@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ELF="${RVNPU_KERNEL_ELF:?RVNPU_KERNEL_ELF is required}"
+ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
 DIRECT_TEST="${ROOT_DIR}/build/linux/test_rvnpu_nms"
 RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_nms_onnx"
 PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"

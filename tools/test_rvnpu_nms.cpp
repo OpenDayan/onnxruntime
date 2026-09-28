@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
                                     argument);
     }
     if (kernel_elf.empty() || case_name.empty())
-      throw std::invalid_argument("--kernel-elf and --case are required");
+      throw std::invalid_argument("");
     rvnpu::DeviceContext context(kernel_elf);
     if (case_name == "gathernd") {
       TestGatherNd(context);

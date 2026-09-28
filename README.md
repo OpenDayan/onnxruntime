@@ -19,23 +19,27 @@ im2col+matmul、elementwise、softmax 等),经 dycc 编译为 `.o` 后链接进 
 |---|---|---|
 | `/workspace/onnxruntime-rvnpu` | `main` | 本仓库:EP 插件、runtime、测试工具 |
 | `/workspace/dayan-base` | `rvtv2/stable` | dayan 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
-| `/workspace/npu-cluster-sim` | `main`(测试实验版本为) | RTL 仿真器 TestCluster |
+| `/workspace/npu-cluster-sim` | `v0.5.4-rc1` | RTL 仿真器 TestCluster |
 
 ## 2. 启动模拟器与 dayan_server
 
 测试工具不直接连 TestCluster,而是连 dayan_server 的 socket
-(`/tmp/dayan-server.sock`),由它加载固件并驱动仿真器:
+(`/tmp/dayan-server.sock`),由它加载固件并驱动仿真器。
+
+手动启动(在 npu-docker 上执行):
 
 ```bash
-./scripts/start_sim.sh
+# 1. 启动 TestCluster 仿真器
+cd /workspace/npu-cluster-sim './TestCluster'
+启动后输入c
+
+# 2. 起 dayan_server（在新终端执行）
+cd /workspace/dayan-base
+nohup build/host/driver/dayan_server --core-mask 1 \
+    > /tmp/dayan-server.log 2>&1 &
 ```
 
-该脚本会清理旧实例、在 tmux 会话 `sim` 里启动 TestCluster 并开始仿真、
-拉起 dayan_server(core-mask=1 等必要参数已内置)。手动查看周期水位:
-
-```bash
-tmux capture-pane -t sim -p | grep -oE "Cycl[e]*[0-9]+" | tail -1
-```
+`./scripts/start_sim.sh` 也可以执行此脚本实现启动
 
 注意:
 
@@ -44,56 +48,54 @@ tmux capture-pane -t sim -p | grep -oE "Cycl[e]*[0-9]+" | tail -1
 
 ## 3. 编译
 
-内核(改了 `demo/onnx/kernel_*.cpp` 或 dayan_intrinsics.h 后执行):
+首次准备 ONNX Runtime SDK(下载官方包解压到 `build/ort-sdk`,
+下面的 cmake 参数依赖这个目录;已解压过则跳过):
+
+```bash
+./scripts/fetch_onnxruntime_sdk.sh
+```
+
+编译算子内核(编译 dayan-base 的 `demo/onnx/kernel_*.cpp`):
 
 ```bash
 ./scripts/build_dayan_kernels.sh
 ```
 
-runtime 与测试工具(增量):
+编译 runtime 和测试工具:
 
 ```bash
-cd build/dayan-migration && cmake . && make -j8
-```
-
-direct 测试需要 dummy ELF 参数(值无用):
-
-```bash
-export RVNPU_KERNEL_ELF=/tmp/dummy-kernel-elf && : > /tmp/dummy-kernel-elf
+mkdir -p build/dayan-migration
+cd build/dayan-migration
+cmake ../.. \
+  -DONNXRUNTIME_ROOT=$PWD/../../build/ort-sdk \
+  -DONNXRUNTIME_LIB_DIR=$PWD/../../build/ort-sdk/lib \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+make -j8
 ```
 
 ## 4. 测试
 
-全量算子回归(direct + EP,19 算子):
+全量算子回归(19 算子)。每个算子跑两步:先 direct 直调设备内核,
+再用 ONNX Runtime EP 跑同一算子的模型对比:
 
 ```bash
 export LD_LIBRARY_PATH=$PWD/build/ort-sdk/lib:$LD_LIBRARY_PATH
-bash scripts/run_dayan_tests.sh                 # 除 yolov8n* 外全部
-bash scripts/run_dayan_tests.sh <op> [<op> ...] # 指定算子
-bash scripts/run_dayan_tests.sh --direct-ops      # 小样本周期测量 + 整网外推
+bash scripts/run_dayan_tests.sh                 # 全部(direct+EP 各一遍)
+bash scripts/run_dayan_tests.sh <op> [<op> ...] # 只跑指定算子
+bash scripts/run_dayan_tests.sh --direct-ops    # 只直调不走 EP,测周期+外推整网
 ```
 
-算子矩阵(两网全部形状逐个直测,自动管理水位/重启):
+yolo 网络真实尺寸算子测试(yolov8n_64/640 网内全部形状逐个直测,
+仿真周期水位到 50M 自动重启续跑):
 
 ```bash
 nohup bash scripts/run_operator_matrix.sh \
   > build/operator_matrix/nohup.log 2>&1 &
-tail -3 build/operator_matrix/run.log             # 进度
+
 python3 tools/gen_operator_matrix_table.py        # 生成总表
 # 结果:build/operator_matrix/results.csv
 #       build/operator_matrix/operator_matrix_table.md
 ```
-
-单算子旧入口仍可用:
-
-```bash
-./scripts/test_operator.sh <op>
-```
-
-`RVNPU_CONV_REFERENCE=bf16` 可将 direct Conv 的 CPU reference 切为 BF16。
-
-周期测量注意:超时按 `实测周期 ÷ 仿真速度(~4-6k 周期/秒) × 1.5` 估,
-不拍脑袋;宿主机 load 高时仿真速度骤降,先 `uptime` 排除。
 
 ## 5. YOLOv8n 测试
 
@@ -101,9 +103,6 @@ python3 tools/gen_operator_matrix_table.py        # 生成总表
 ./scripts/test_operator.sh yolov8n           # 官方 nms=True 模型(640)
 ./scripts/test_operator.sh yolov8n_manual    # TopK(K=1) 手动优化后处理
 ```
-
-整网未在仿真中跑通(周期需求 >100M,超单会话上限);64 输入缩小模型
-`build/yolov8n_64/yolov8n_64.onnx` 用于周期外推。
 
 ## 6. 已知限制
 

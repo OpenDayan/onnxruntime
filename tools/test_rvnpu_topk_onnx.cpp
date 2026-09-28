@@ -40,7 +40,7 @@ Options Parse(int argc, char **argv) {
     }
   }
   if (options.model.empty() || options.plugin.empty() ||
-      options.kernel_elf.empty() || options.data_dir.empty()) {
+      options.data_dir.empty()) {
     throw std::invalid_argument("missing TopK runner argument");
   }
   return options;

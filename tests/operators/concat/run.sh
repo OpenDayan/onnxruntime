@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ELF="${RVNPU_KERNEL_ELF:?RVNPU_KERNEL_ELF is required}"
+ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
 DATA="${ROOT_DIR}/build/operators/concat/supported"
 echo "[1/2] Direct kernel 数值测试"
 "${ROOT_DIR}/build/linux/test_rvnpu_tensor_copy" --kernel-elf "${ELF}" --op concat

@@ -57,7 +57,6 @@ set -- ${POS[@]+"${POS[@]}"}
 
 export LD_LIBRARY_PATH="${ROOT_DIR}/build/ort-sdk/lib:${LD_LIBRARY_PATH:-}"
 export DAYAN_SERVER_SOCKET="${DAYAN_SERVER_SOCKET:-/tmp/dayan-server.sock}"
-export RVNPU_KERNEL_ELF=/tmp/dummy-kernel-elf
 
 setup_shim() {
   rm -rf "${SHIM}"

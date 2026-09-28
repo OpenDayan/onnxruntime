@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ELF="${RVNPU_KERNEL_ELF:?RVNPU_KERNEL_ELF is required}"
+ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
 DATA="${ROOT_DIR}/build/operators/sub"
 
 echo "[1/2] Direct kernel 数值测试"

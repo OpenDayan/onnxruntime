@@ -6,9 +6,7 @@ TC=/workspace/npu-cluster-sim
 BIN=$ORT/build/dayan-migration
 export LD_LIBRARY_PATH=$ORT/build/ort-sdk/lib:${LD_LIBRARY_PATH:-}
 export DAYAN_SERVER_SOCKET=/tmp/dayan-server.sock
-export RVNPU_KERNEL_ELF=/tmp/dummy-kernel-elf
 CSV=$ORT/build/operator_matrix/results.csv
-: > /tmp/dummy-kernel-elf
 [ -f $CSV ] || echo "net,tag,shape,rc,cycles" > $CSV
 
 tc_cycles() {

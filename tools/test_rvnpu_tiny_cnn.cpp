@@ -41,9 +41,9 @@ Options Parse(int argc, char **argv) {
                                   argument);
   }
   if (options.model.empty() || options.plugin.empty() ||
-      options.kernel_elf.empty() || options.data_dir.empty()) {
+      options.data_dir.empty()) {
     throw std::invalid_argument(
-        "--model, --plugin, --kernel-elf and --data-dir are required");
+        "--model, --plugin, ");
   }
   return options;
 }

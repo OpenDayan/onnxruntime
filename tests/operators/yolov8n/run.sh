@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ELF="${RVNPU_KERNEL_ELF:?RVNPU_KERNEL_ELF is required}"
+ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
 YOLO_RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_yolov8n"
 PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"

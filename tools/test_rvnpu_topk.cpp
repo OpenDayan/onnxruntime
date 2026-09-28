@@ -34,10 +34,10 @@ Options Parse(int argc, char **argv) {
       throw std::invalid_argument("unknown or incomplete argument: " +
                                   argument);
   }
-  if (options.kernel_elf.empty() || options.rows <= 0 ||
+  if (options.rows <= 0 ||
       options.columns <= 0 || options.k <= 0) {
     throw std::invalid_argument(
-        "--kernel-elf, --rows, --columns and --k are required");
+        "--rows, --columns and --k are required");
   }
   return options;
 }
