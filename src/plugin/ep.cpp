@@ -556,9 +556,13 @@ bool RvnpuEp::SupportsConv(const Ort::ConstNode &node) {
   }
   try {
     const auto attributes = ReadConvAttributes(node);
-    static_cast<void>(ValidateConvShapes(*input, *weight,
-                                         bias ? &*bias : nullptr, attributes));
+    const auto shape = ValidateConvShapes(*input, *weight,
+                                         bias ? &*bias : nullptr, attributes);
+    DeviceContext::ValidateConvResources(shape);
+    // Static Conv semantics are enabled within the device/resource envelope.
     return true;
+  } catch (const ConvModelError &error) {
+    throw Ort::Exception(error.what(), ORT_INVALID_ARGUMENT);
   } catch (...) {
     return false;
   }

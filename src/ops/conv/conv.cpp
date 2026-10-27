@@ -22,7 +22,7 @@ T NodeAttribute(const Ort::ConstNode &node, const char *name,
   T result;
   const Ort::Status read_status = attribute.GetValue<T>(result);
   if (!read_status.IsOK()) {
-    throw std::runtime_error(std::string("invalid attribute ") + name);
+    throw ConvModelError(std::string("invalid attribute ") + name);
   }
   return result;
 }
@@ -30,19 +30,22 @@ T NodeAttribute(const Ort::ConstNode &node, const char *name,
 template <typename T>
 std::vector<T> NodeAttributeArray(const Ort::ConstNode &node,
                                   const char *name,
-                                  std::vector<T> default_value) {
+                                  std::vector<T> default_value,
+                                  bool *provided = nullptr) {
   Ort::ConstOpAttr attribute;
   const Ort::Status status = node.GetAttributeByName(name, attribute);
   if (!status.IsOK()) {
     throw std::runtime_error(std::string("cannot read attribute ") + name +
                              ": " + status.GetErrorMessage());
   }
+  if (provided)
+    *provided = attribute != nullptr;
   if (attribute == nullptr)
     return default_value;
   std::vector<T> result;
   const Ort::Status read_status = attribute.GetValueArray<T>(result);
   if (!read_status.IsOK()) {
-    throw std::runtime_error(std::string("invalid attribute ") + name);
+    throw ConvModelError(std::string("invalid attribute ") + name);
   }
   return result;
 }
@@ -60,10 +63,16 @@ T KernelAttribute(const OrtKernelInfo *info, const char *name,
 template <typename T>
 std::vector<T> KernelAttributeArray(const OrtKernelInfo *info,
                                     const char *name,
-                                    std::vector<T> default_value) {
+                                    std::vector<T> default_value,
+                                    bool *provided = nullptr) {
   try {
-    return Ort::ConstKernelInfo{info}.GetAttributes<T>(name);
+    auto result = Ort::ConstKernelInfo{info}.GetAttributes<T>(name);
+    if (provided)
+      *provided = true;
+    return result;
   } catch (const Ort::Exception &) {
+    if (provided)
+      *provided = false;
     return default_value;
   }
 }
@@ -74,11 +83,13 @@ ConvAttributes ReadConvAttributes(const OrtKernelInfo *info) {
       KernelAttributeArray<int64_t>(info, "dilations", {1, 1});
   result.kernel_shape =
       KernelAttributeArray<int64_t>(info, "kernel_shape", {});
-  result.pads = KernelAttributeArray<int64_t>(info, "pads", {0, 0, 0, 0});
+  result.pads = KernelAttributeArray<int64_t>(
+      info, "pads", {0, 0, 0, 0}, &result.pads_provided);
   result.strides = KernelAttributeArray<int64_t>(info, "strides", {1, 1});
   result.group = KernelAttribute<int64_t>(info, "group", 1);
   result.auto_pad =
       KernelAttribute<std::string>(info, "auto_pad", "NOTSET");
+  ValidateConvAttributeValues(result);
   return result;
 }
 
@@ -104,11 +115,13 @@ ConvAttributes ReadConvAttributes(const Ort::ConstNode &node) {
       NodeAttributeArray<int64_t>(node, "dilations", {1, 1});
   result.kernel_shape =
       NodeAttributeArray<int64_t>(node, "kernel_shape", {});
-  result.pads = NodeAttributeArray<int64_t>(node, "pads", {0, 0, 0, 0});
+  result.pads = NodeAttributeArray<int64_t>(
+      node, "pads", {0, 0, 0, 0}, &result.pads_provided);
   result.strides = NodeAttributeArray<int64_t>(node, "strides", {1, 1});
   result.group = NodeAttribute<int64_t>(node, "group", 1);
   result.auto_pad =
       NodeAttribute<std::string>(node, "auto_pad", "NOTSET");
+  ValidateConvAttributeValues(result);
   return result;
 }
 

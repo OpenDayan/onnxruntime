@@ -11,8 +11,9 @@ namespace rvnpu {
 
 // Test-only numerical reference. The ORT CPU EP still executes its normal
 // FP32 Conv; this helper is used to compare the NPU's reduced-precision path.
-// The current Triton-generated Conv/MatMul artifact converts FP32 tiles by
-// taking the high 16 bits.
+// Normal finite values use round-to-nearest, ties-to-even, matching host
+// packing. Special values/subnormals retain the legacy conversion below;
+// this helper is not a claim that those cases have passed RTL qualification.
 inline uint16_t FloatToBf16(float value) noexcept {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(value));
@@ -39,10 +40,10 @@ inline float Bf16ToFloat(uint16_t value) noexcept {
   return result;
 }
 
-inline void ConvBf16Reference(
+inline void ConvReference(
     const std::vector<float> &input, const std::vector<float> &weight,
     const std::vector<float> *bias, std::vector<float> &output,
-    const ConvShape &shape) {
+    const ConvShape &shape, bool bf16) {
   if (input.size() != shape.input_elements) {
     throw std::invalid_argument("BF16 Conv input size does not match shape");
   }
@@ -63,58 +64,68 @@ inline void ConvBf16Reference(
   }
 
   output.assign(shape.output_elements, 0.0f);
+  for (int32_t batch = 0; batch < shape.batch; ++batch)
   for (int32_t output_channel = 0;
        output_channel < shape.output_channels; ++output_channel) {
     for (int32_t output_h = 0; output_h < shape.output_h; ++output_h) {
       for (int32_t output_w = 0; output_w < shape.output_w; ++output_w) {
         // Keep the same straightforward accumulation structure as the
         // existing FP32 Conv reference. Only the two operands are BF16.
-        float sum =
-            bias == nullptr
-                ? 0.0f
-                : (*bias)[static_cast<size_t>(output_channel)];
+        float sum = 0.0f;
+        const int32_t group = output_channel / shape.output_channels_per_group;
         for (int32_t input_channel = 0;
-             input_channel < shape.input_channels; ++input_channel) {
+             input_channel < shape.input_channels_per_group; ++input_channel) {
           for (int32_t kernel_h = 0; kernel_h < shape.kernel_h; ++kernel_h) {
-            const int32_t input_h =
-                output_h * shape.stride_h + kernel_h - shape.pad_h;
+            const int64_t input_h =
+                int64_t(output_h) * shape.stride_h +
+                int64_t(kernel_h) * shape.dilation_h - shape.pad_h;
             if (input_h < 0 || input_h >= shape.input_h) {
               continue;
             }
             for (int32_t kernel_w = 0; kernel_w < shape.kernel_w;
                  ++kernel_w) {
-              const int32_t input_w =
-                  output_w * shape.stride_w + kernel_w - shape.pad_w;
+              const int64_t input_w =
+                  int64_t(output_w) * shape.stride_w +
+                  int64_t(kernel_w) * shape.dilation_w - shape.pad_w;
               if (input_w < 0 || input_w >= shape.input_w) {
                 continue;
               }
 
               const size_t input_index =
-                  (static_cast<size_t>(input_channel) * shape.input_h +
+                  ((static_cast<size_t>(batch) * shape.input_channels +
+                    group * shape.input_channels_per_group + input_channel) * shape.input_h +
                    input_h) *
                       shape.input_w +
                   input_w;
               const size_t weight_index =
                   ((static_cast<size_t>(output_channel) *
-                        shape.input_channels +
+                        shape.input_channels_per_group +
                     input_channel) *
                        shape.kernel_h +
                    kernel_h) *
                       shape.kernel_w +
                   kernel_w;
 
-              sum += Bf16ToFloat(input_bf16[input_index]) *
-                     Bf16ToFloat(weight_bf16[weight_index]);
+              sum += bf16 ? Bf16ToFloat(input_bf16[input_index]) *
+                                Bf16ToFloat(weight_bf16[weight_index])
+                          : input[input_index] * weight[weight_index];
             }
           }
         }
-        output[(static_cast<size_t>(output_channel) * shape.output_h +
+        output[((static_cast<size_t>(batch) * shape.output_channels + output_channel) * shape.output_h +
                 output_h) *
                    shape.output_w +
-               output_w] = sum;
+               output_w] = sum + (bias ? (*bias)[output_channel] : 0.0f);
       }
     }
   }
+}
+
+inline void ConvBf16Reference(
+    const std::vector<float> &input, const std::vector<float> &weight,
+    const std::vector<float> *bias, std::vector<float> &output,
+    const ConvShape &shape) {
+  ConvReference(input, weight, bias, output, shape, true);
 }
 
 inline void MatMulBf16Reference(

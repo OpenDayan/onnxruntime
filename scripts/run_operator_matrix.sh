@@ -76,14 +76,14 @@ run_case() {
     echo "$(date +%H:%M:%S) $net/$tag rc=$rc cyc=$d water=$c1" >> $ORT/build/operator_matrix/run.log
 }
 
-C=$BIN/test_rvnpu_conv_maxpool
+C=$BIN/test_rvnpu_conv
 E=$BIN/test_rvnpu_elementwise
 T=$BIN/test_rvnpu_transform
 K=$BIN/test_rvnpu_topk
 N=$BIN/test_rvnpu_nms
 
-conv() { run_case "$1" "$2" test_rvnpu_conv_maxpool --op conv --input-shape "$3" --weight-shape "$4" --stride "$5" --pad "$6" ${7:+--$7}; }
-pool() { run_case "$1" "$2" test_rvnpu_conv_maxpool --op maxpool --input-shape "$3" --kernel "$4" --stride "$5" --pad "$6"; }
+conv() { run_case "$1" "$2" test_rvnpu_conv --input-shape "$3" --weight-shape "$4" --stride "$5" --pad "$6" ${7:+--$7}; }
+pool() { run_case "$1" "$2" test_rvnpu_maxpool --input-shape "$3" --kernel "$4" --stride "$5" --pad "$6"; }
 
 # ============ 64 网:conv 3×3 真实形状(17 组代表) ============
 conv y64 c3_1 1,3,64,64 16,3,3,3 2,2 1,1 bias

@@ -6,6 +6,11 @@
 
 int main() {
   assert(rvnpu::Bf16ToFloat(rvnpu::FloatToBf16(1.00390625f)) == 1.0f);
+  assert(rvnpu::Bf16ToFloat(rvnpu::FloatToBf16(1.01171875f)) == 1.015625f);
+  assert(rvnpu::Bf16ToFloat(rvnpu::FloatToBf16(-1.00390625f)) == -1.0f);
+  assert(rvnpu::Bf16ToFloat(rvnpu::FloatToBf16(-1.01171875f)) == -1.015625f);
+  assert(rvnpu::FloatToBf16(0.f) == 0);
+  assert(rvnpu::FloatToBf16(-0.f) == 0x8000);
 
   rvnpu::ConvAttributes attributes;
   attributes.kernel_shape = {3, 3};

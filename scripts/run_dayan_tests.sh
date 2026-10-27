@@ -358,7 +358,7 @@ direct_ops() {
   echo "name,tool,args,pass,raw_cycles,net_cycles" >"${DIRECT_CSV}"
 
   IFS=':' read -r CONV_IN CONV_W CONV_S CONV_P <<<"${CONV_SPEC}"
-  local conv_args="--op conv --input-shape ${CONV_IN} --weight-shape ${CONV_W} --stride ${CONV_S} --pad ${CONV_P} --bias"
+  local conv_args="--input-shape ${CONV_IN} --weight-shape ${CONV_W} --stride ${CONV_S} --pad ${CONV_P} --bias"
 
   # 对齐 legacy samples.csv 的算子覆盖。silu 在 yolo 图里表达为 sigmoid+mul，
   # 不单测；transpose 整网占比 ~0 且 legacy 计数也是 0，不测；argmax 无直测入口。
@@ -372,12 +372,12 @@ direct_ops() {
     "sigmoid_mid|test_rvnpu_elementwise|--op sigmoid --shape 1,64,2,2"
     "mul|test_rvnpu_elementwise|--op mul --shape 2,3,5 --rhs-shape 2,3,5"
     "mul_mid|test_rvnpu_elementwise|--op mul --shape 1,64,2,2 --rhs-shape 1,64,2,2"
-    "maxpool|test_rvnpu_conv_maxpool|--op maxpool --input-shape 1,3,8,9 --kernel 2,2 --stride 2,2 --pad 0,0"
+    "maxpool|test_rvnpu_maxpool| --input-shape 1,3,8,9 --kernel 2,2 --stride 2,2 --pad 0,0"
     "softmax|test_rvnpu_transform|--op softmax"
     "reduce_max|test_rvnpu_transform|--op reduce_max"
     "resize|test_rvnpu_transform|--op resize"
     "nms|test_rvnpu_nms|--case nonoverlap"
-    "conv|test_rvnpu_conv_maxpool|${conv_args}"
+    "conv|test_rvnpu_conv|${conv_args}"
   )
 
   for s in "${samples[@]}"; do

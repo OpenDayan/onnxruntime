@@ -31,8 +31,14 @@ def prepare(args: argparse.Namespace) -> None:
     if len(model.graph.input) != 1:
         raise ValueError("YOLOv8n model must have one input")
     shape = tensor_shape(model.graph.input[0])
-    if shape != [1, 3, 640, 640]:
-        raise ValueError(f"YOLOv8n input must be [1,3,640,640], got {shape}")
+    if (len(shape) != 4 or shape[:2] != [1, 3]
+            or any(d <= 0 or d % 32 for d in shape[2:])):
+        raise ValueError(
+            f"YOLOv8n input must be static [1,3,H,W] with positive "
+            f"multiples-of-32 spatial dimensions, got {shape}"
+        )
+    if model.graph.input[0].type.tensor_type.elem_type != onnx.TensorProto.FLOAT:
+        raise ValueError("YOLOv8n input must be FP32")
 
     image = cv2.imread(str(args.image))
     if image is None:

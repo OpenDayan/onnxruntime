@@ -8,6 +8,7 @@
 
 #include "runtime/device_buffer.h"
 #include "runtime/cpu_reference.h"
+#include "runtime/tensor_utils.h"
 
 namespace rvnpu {
 namespace {
@@ -512,99 +513,205 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
                 &y[static_cast<size_t>(row) * s.n]);
 }
 
+void DeviceContext::ValidateConvResources(const ConvShape &s) {
+  const uint64_t ci = s.input_channels_per_group;
+  const uint64_t co = s.output_channels_per_group;
+  const uint64_t limit = std::numeric_limits<uint32_t>::max();
+  if (!ci || !co || ci * 2 > limit || ci * s.input_w * 2 > limit ||
+      ci * co * 2 > limit || ci * co * s.kernel_w * 2 > limit ||
+      co * 4 > limit || co * s.output_w * 4 > limit)
+    throw std::invalid_argument("Conv device byte stride exceeds uint32");
+  // Conservative per-invocation release envelope, not total/free DRAM.
+  // The qualified RTL server uses a 4 GiB normal-memory region. Keep ample
+  // room for firmware, launch descriptors and other operators. RunConv keeps
+  // only one group and one batch's input/output buffers resident at a time.
+  constexpr uint64_t resident_limit = 256ULL * 1024 * 1024;
+  const uint64_t input_bytes = CheckedMultiply(
+      CheckedMultiply(ci, s.input_h, "Conv resident input"),
+      uint64_t(s.input_w) * 2, "Conv resident input bytes");
+  const uint64_t weight_bytes = CheckedMultiply(
+      CheckedMultiply(ci, co, "Conv resident weight"),
+      uint64_t(s.kernel_h) * s.kernel_w * 2, "Conv resident weight bytes");
+  const uint64_t output_bytes = CheckedMultiply(
+      CheckedMultiply(co, s.output_h, "Conv resident output"),
+      uint64_t(s.output_w) * 4, "Conv resident output bytes");
+  // Server rounds each normal Buffer to 4 KiB with its MMU enabled.
+  auto page_bytes = [](uint64_t bytes) {
+    return (bytes + 4095) & ~uint64_t(4095);
+  };
+  if (input_bytes > resident_limit || weight_bytes > resident_limit ||
+      output_bytes > resident_limit ||
+      page_bytes(input_bytes) + page_bytes(weight_bytes) +
+          page_bytes(output_bytes) + 4096 > resident_limit)
+    throw std::invalid_argument("Conv resident buffers exceed 256 MiB envelope");
+  // Conservative release envelope, not a claim about undocumented register
+  // maxima. Broaden only with device numerical tests.
+  if (s.kernel_h > 7 || s.kernel_w > 7 || s.stride_h > 3 || s.stride_w > 3 ||
+      s.dilation_h > 3 || s.dilation_w > 3)
+    throw std::invalid_argument(
+        "Conv outside tested device candidate envelope");
+  const uint64_t ih = uint64_t(kConvTileH - 1) * s.stride_h +
+                      uint64_t(s.kernel_h - 1) * s.dilation_h + 1;
+  const uint64_t iw = uint64_t(kConvTileW - 1) * s.stride_w +
+                      uint64_t(s.kernel_w - 1) * s.dilation_w + 1;
+  auto align = [](uint64_t bytes) { return (bytes + 63) & ~uint64_t(63); };
+  const uint64_t uram_bytes = 2 *
+      (align(ih * iw * kConvTileCi * 2) +
+       align(uint64_t(s.kernel_h) * s.kernel_w * kConvTileCi * kConvTileCo * 2) +
+       align(uint64_t(kConvTileH) * kConvTileW * kConvTileCo * 4));
+  if (uram_bytes > 65536)
+    throw std::invalid_argument("Conv fixed tile exceeds 64 KiB URAM");
+}
+
 void DeviceContext::RunConv(const float *input, const float *weight,
                             const float *bias, float *output,
-                            const ConvShape &s) {
-  if (!input || !weight || !output || (s.has_bias && !bias))
+                            const ConvShape &shape) {
+  if (!input || !weight || !output || (shape.has_bias && !bias))
     throw std::invalid_argument("Conv");
+  ValidateConvResources(shape);
   std::lock_guard lock(mutex_);
-  size_t ib = s.input_elements * 4, cb = s.has_bias ? s.bias_elements * 4 : 0,
-         ob = s.output_elements * 4, colb = s.column_elements * 4;
-  DayanDeviceBuffer in(runtime_, ib), cols(runtime_, colb);
-  CopyToDevice(in.Get(), input, ib);
-  DAYAN_ATTRS("ort-im2col");
-  RequireSuccess(rvnpu_im2col_nchw_fp32(
-                     in.Get(), cols.Get(), s.input_channels, s.input_h,
-                     s.input_w, s.output_h, s.output_w, s.kernel_h, s.kernel_w,
-                     s.stride_h, s.stride_w, s.pad_h, s.pad_w, &attrs),
-                 "Conv im2col");
-  // im2col 的结果要转 BF16 并补零，取回 host 处理。
-  const size_t kpad = AlignUp(static_cast<size_t>(s.matmul_k), 32);
-  const size_t npad = AlignUp(static_cast<size_t>(s.matmul_n), 16);
-  std::vector<float> columns(s.column_elements);
-  CopyFromDevice(columns.data(), cols.Get(), colb);
-  if (const char *raw = getenv("RVNPU_DUMP_RAW")) {
-    const size_t limit = (size_t)atoll(raw);
-    size_t shown = 0;
-    for (size_t i = 0; i < limit && shown < 40; ++i) {
-      if (columns[i] != input[i]) {
-        fprintf(stderr, "[raw] %zu: in=%.3f col=%.3f\n", i, input[i],
-                columns[i]);
-        ++shown;
-      }
+  ConvShape s = shape;
+  s.input_channels = shape.input_channels_per_group;
+  s.output_channels = shape.output_channels_per_group;
+  const size_t input_group_size =
+      size_t(s.input_channels) * s.input_h * s.input_w;
+  const size_t output_group_size =
+      size_t(s.output_channels) * s.output_h * s.output_w;
+  const size_t weight_group_size =
+      size_t(s.output_channels) * s.input_channels * s.kernel_h * s.kernel_w;
+  const float *all_input = input;
+  const float *all_weight = weight;
+  const float *all_bias = bias;
+  float *all_output = output;
+  for (int32_t group = 0; group < shape.group; ++group) {
+    weight = all_weight + size_t(group) * weight_group_size;
+    bias = all_bias ? all_bias + size_t(group) * s.output_channels : nullptr;
+    const size_t input_plane = static_cast<size_t>(s.input_h) * s.input_w;
+    const size_t input_stride =
+        static_cast<size_t>(s.input_channels) * sizeof(uint16_t);
+    const size_t input_row_stride =
+        static_cast<size_t>(s.input_w) * input_stride;
+    const size_t weight_channel_stride =
+        static_cast<size_t>(s.input_channels) * sizeof(uint16_t);
+    const size_t weight_col_stride =
+        static_cast<size_t>(s.output_channels) * weight_channel_stride;
+    const size_t weight_row_stride =
+        static_cast<size_t>(s.kernel_w) * weight_col_stride;
+    const size_t output_stride =
+        static_cast<size_t>(s.output_channels) * sizeof(float);
+    const size_t output_row_stride =
+        static_cast<size_t>(s.output_w) * output_stride;
+
+    std::vector<uint16_t> packed_input(input_plane * s.input_channels);
+
+    std::vector<uint16_t> packed_weight(static_cast<size_t>(s.kernel_h) *
+                                        s.kernel_w * s.output_channels *
+                                        s.input_channels);
+    for (int32_t output_channel = 0; output_channel < s.output_channels;
+         ++output_channel)
+      for (int32_t input_channel = 0; input_channel < s.input_channels;
+           ++input_channel)
+        for (int32_t kernel_height = 0; kernel_height < s.kernel_h;
+             ++kernel_height)
+          for (int32_t kernel_width = 0; kernel_width < s.kernel_w;
+               ++kernel_width) {
+            const size_t source =
+                ((static_cast<size_t>(output_channel) * s.input_channels +
+                  input_channel) *
+                     s.kernel_h +
+                 kernel_height) *
+                    s.kernel_w +
+                kernel_width;
+            const size_t destination =
+                ((static_cast<size_t>(kernel_height) * s.kernel_w +
+                  kernel_width) *
+                     s.output_channels +
+                 output_channel) *
+                    s.input_channels +
+                input_channel;
+            packed_weight[destination] = FloatToBf16(weight[source]);
+          }
+
+    std::vector<float> packed_output(static_cast<size_t>(s.output_h) *
+                                     s.output_w * s.output_channels);
+    DayanDeviceBuffer in(runtime_, packed_input.size() * sizeof(uint16_t));
+    DayanDeviceBuffer weights(runtime_,
+                              packed_weight.size() * sizeof(uint16_t));
+    DayanDeviceBuffer out(runtime_, packed_output.size() * sizeof(float));
+    CopyToDevice(weights.Get(), packed_weight.data(),
+                 packed_weight.size() * sizeof(uint16_t));
+
+    const Conv2dTileConfig config{static_cast<uint32_t>(s.input_channels),
+                                  static_cast<uint32_t>(s.output_channels),
+                                  static_cast<uint32_t>(s.input_w),
+                                  static_cast<uint32_t>(s.input_h),
+                                  static_cast<uint32_t>(s.output_w),
+                                  static_cast<uint32_t>(s.output_h),
+                                  static_cast<uint32_t>(s.kernel_w),
+                                  static_cast<uint32_t>(s.kernel_h),
+                                  static_cast<uint32_t>(s.pad_w),
+                                  static_cast<uint32_t>(s.pad_h),
+                                  static_cast<uint32_t>(s.stride_w),
+                                  static_cast<uint32_t>(s.stride_h),
+                                  static_cast<uint32_t>(s.dilation_w),
+                                  static_cast<uint32_t>(s.dilation_h),
+                                  static_cast<uint32_t>(input_stride),
+                                  static_cast<uint32_t>(input_row_stride),
+                                  static_cast<uint32_t>(weight_col_stride),
+                                  static_cast<uint32_t>(weight_row_stride),
+                                  static_cast<uint32_t>(weight_channel_stride),
+                                  static_cast<uint32_t>(output_stride),
+                                  static_cast<uint32_t>(output_row_stride),
+                                  kConvTileH,
+                                  kConvTileW,
+                                  kConvTileCi,
+                                  kConvTileCo,
+        1U};
+    DayanDeviceBuffer config_buffer(runtime_, sizeof(config));
+    CopyToDevice(config_buffer.Get(), &config, sizeof(config));
+
+    for (int32_t batch = 0; batch < shape.batch; ++batch) {
+      input =
+          all_input + (size_t(batch) * shape.group + group) * input_group_size;
+      output = all_output +
+               (size_t(batch) * shape.group + group) * output_group_size;
+      for (int32_t channel = 0; channel < s.input_channels; ++channel)
+        for (size_t pixel = 0; pixel < input_plane; ++pixel)
+          packed_input[pixel * s.input_channels + channel] =
+              FloatToBf16(input[size_t(channel) * input_plane + pixel]);
+      CopyToDevice(in.Get(), packed_input.data(),
+                   packed_input.size() * sizeof(uint16_t));
+      npu_kernel_launch_attrs_t attrs{};
+      npu_kernel_launch_attrs_init(&attrs, runtime_.context(),
+                                   runtime_.stream(), "conv2d_tile_4c");
+      attrs.config.task_dim = NPUTaskDim3{4U, 1, 1};
+      attrs.config.task_mode =
+          NPUTaskMode::kFourCore;
+      attrs.timeout_ms = kTimeout;
+      RequireSuccess(conv2d_tile_4c(config_buffer.Get(), in.Get(),
+                                   weights.Get(), out.Get(), &attrs),
+                     "Conv tiled 4c");
+      CopyFromDevice(packed_output.data(), out.Get(),
+                     packed_output.size() * sizeof(float));
+
+      for (int32_t output_channel = 0; output_channel < s.output_channels;
+           ++output_channel)
+        for (int32_t height = 0; height < s.output_h; ++height)
+          for (int32_t width = 0; width < s.output_w; ++width) {
+            const size_t source =
+                (static_cast<size_t>(height) * s.output_w + width) *
+                    s.output_channels +
+                output_channel;
+            const size_t destination =
+                (static_cast<size_t>(output_channel) * s.output_h + height) *
+                    s.output_w +
+                width;
+            output[destination] =
+                packed_output[source] + (bias ? bias[output_channel] : 0.0f);
+          }
     }
-    if (shown == 0)
-      fprintf(stderr, "[raw] identical for %zu\n", limit);
   }
-  if (const char *dump = getenv("RVNPU_DUMP_COLUMNS")) {
-    const size_t limit = (size_t)atoll(dump);
-    size_t shown = 0;
-    for (size_t p = 0; p * s.matmul_k < columns.size() && shown < limit;
-         ++p) {
-      const size_t py = p / s.output_w, px = p % s.output_w;
-      for (size_t k = 0; k < (size_t)s.matmul_k && shown < limit; ++k) {
-        const size_t c = k / (s.kernel_h * s.kernel_w);
-        const size_t r = k % (s.kernel_h * s.kernel_w);
-        const long iy = (long)py * s.stride_h + (long)(r / s.kernel_w) -
-                        s.pad_h;
-        const long ix = (long)px * s.stride_w + (long)(r % s.kernel_w) -
-                        s.pad_w;
-        float expect = 0.0f;
-        if (iy >= 0 && iy < s.input_h && ix >= 0 && ix < s.input_w)
-          expect = input[c * s.input_h * s.input_w + iy * s.input_w + ix];
-        const size_t index = p * s.matmul_k + k;
-        if (index >= columns.size())
-          continue;
-        if (columns[index] != expect) {
-          fprintf(stderr, "[col] p=%zu(k=%zu,c=%zu) got=%.3f exp=%.3f\n",
-                  p, k, c, columns[index], expect);
-          ++shown;
-        }
-      }
-    }
-  }
-  const size_t mm = static_cast<size_t>(s.matmul_m);
-  const std::vector<uint16_t> a_bf16 =
-      PadToBf16(columns.data(), mm, static_cast<size_t>(s.matmul_k), kpad);
-  // weight 是 [output_channels][matmul_k]，按 BT[n][k] 看已经是行主序的 [n][k]，
-  // 正好是 MAT 要的 BT 布局，直接补零即可。
-  const std::vector<uint16_t> bt_bf16 =
-      PadToBf16(weight, static_cast<size_t>(s.matmul_n),
-                static_cast<size_t>(s.matmul_k), kpad);
-  const size_t ab = a_bf16.size() * 2, btb = bt_bf16.size() * 2,
-               ped = mm * npad * 4;
-  DayanDeviceBuffer ai(runtime_, ab), bi(runtime_, btb), padded(runtime_, ped);
-  CopyToDevice(ai.Get(), a_bf16.data(), ab);
-  CopyToDevice(bi.Get(), bt_bf16.data(), btb);
-  const MatmulBf16Config config{
-      static_cast<uint64_t>(s.matmul_m), static_cast<uint64_t>(npad),
-      static_cast<uint64_t>(kpad), kpad * 2, kpad * 2, npad * 4};
-  DayanDeviceBuffer cfg(runtime_, sizeof(config));
-  CopyToDevice(cfg.Get(), &config, sizeof(config));
-  DAYAN_ATTRS_RENAME(attrs, "matmul-bf16-1c");
-  RequireSuccess(
-      matmul_bf16_1c(cfg.Get(), ai.Get(), bi.Get(), padded.Get(), &attrs),
-      "Conv matmul");
-  // MatMul 结果按 [row=output_h*output_w][column=output_channels] 排列，
-  // ONNX Conv 的输出是 NCHW [output_channels][H*W]：转置落盘，顺带加 bias。
-  std::vector<float> tmp(mm * npad);
-  CopyFromDevice(tmp.data(), padded.Get(), ped);
-  const size_t plane = static_cast<size_t>(s.output_h) *
-                       static_cast<size_t>(s.output_w);
-  for (size_t row = 0; row < plane; ++row)
-    for (size_t column = 0; column < static_cast<size_t>(s.output_channels);
-         ++column)
-      output[column * plane + row] =
-          tmp[row * npad + column] + (s.has_bias ? bias[column] : 0.0f);
+
 }
+
 } // namespace rvnpu

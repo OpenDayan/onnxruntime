@@ -41,7 +41,18 @@ struct MatmulBf16Config {
   uint64_t a_stride, bt_stride, c_stride;
 };
 int matmul_bf16_1c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
-int rvnpu_im2col_nchw_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+struct Conv2dTileConfig {
+  uint32_t ci, co, wi, hi, wo, ho, wk, hk;
+  uint32_t pad_l, pad_u, stride_w, stride_h, dilation_w, dilation_h;
+  uint32_t input_stride_w, input_stride_h;
+  uint32_t weight_stride_w, weight_stride_h, weight_stride_co;
+  uint32_t output_stride_w, output_stride_h;
+  uint32_t tile_h, tile_w, tile_ci, tile_co;
+  uint32_t pipeline;
+};
+static_assert(sizeof(Conv2dTileConfig) == 26U * sizeof(uint32_t),
+              "Conv host/device ABI mismatch");
+int conv2d_tile_4c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
 
 namespace rvnpu {
 
@@ -63,6 +74,11 @@ private:
 
 class DeviceContext final {
 public:
+  // Fixed Conv execution: four cores, double buffering, no runtime tuning.
+  static constexpr uint32_t kConvTileH = 8, kConvTileW = 8;
+  static constexpr uint32_t kConvTileCi = 32, kConvTileCo = 16;
+  // Shared by EP assignment and execution; this checks capacity, not planning.
+  static void ValidateConvResources(const ConvShape &);
   explicit DeviceContext(std::string kernel_elf = {},
                          bool cpu_bf16_conv_reference = false);
   ~DeviceContext();

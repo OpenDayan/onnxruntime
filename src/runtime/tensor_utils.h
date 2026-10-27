@@ -123,10 +123,44 @@ struct ConvAttributes {
   std::vector<int64_t> strides{1, 1};
   int64_t group{1};
   std::string auto_pad{"NOTSET"};
+  bool pads_provided{};
 };
+
+// Malformed model semantics must not be confused with a legal shape outside
+// the device's resource envelope.
+struct ConvModelError : std::invalid_argument {
+  using std::invalid_argument::invalid_argument;
+};
+
+inline void ValidateConvAttributeValues(const ConvAttributes &a) {
+  if (a.group <= 0)
+    throw ConvModelError("Conv group must be positive");
+  if (a.strides.empty() || a.dilations.empty() ||
+      std::any_of(a.strides.begin(), a.strides.end(), [](int64_t v) { return v <= 0; }) ||
+      std::any_of(a.dilations.begin(), a.dilations.end(), [](int64_t v) { return v <= 0; }))
+    throw ConvModelError("Conv strides and dilations must be positive");
+  if ((a.pads_provided && a.pads.empty()) ||
+      std::any_of(a.pads.begin(), a.pads.end(), [](int64_t v) { return v < 0; }))
+    throw ConvModelError("Conv pads must be a nonempty nonnegative list");
+  if (a.auto_pad != "NOTSET" && a.auto_pad != "VALID" &&
+      a.auto_pad != "SAME_UPPER" && a.auto_pad != "SAME_LOWER")
+    throw ConvModelError("Unknown Conv auto_pad");
+  if (a.auto_pad != "NOTSET" &&
+      (a.pads_provided ||
+       std::any_of(a.pads.begin(), a.pads.end(), [](int64_t v) { return v != 0; })))
+    throw ConvModelError("Conv auto_pad conflicts with explicit pads");
+}
 
 struct ConvShape {
   std::vector<int64_t> output_shape;
+  int32_t batch{1};
+  int32_t group{1};
+  int32_t input_channels_per_group{};
+  int32_t output_channels_per_group{};
+  int32_t dilation_h{1};
+  int32_t dilation_w{1};
+  int32_t pad_bottom{};
+  int32_t pad_right{};
   int32_t input_channels{};
   int32_t input_h{};
   int32_t input_w{};
@@ -139,13 +173,9 @@ struct ConvShape {
   int32_t stride_w{};
   int32_t pad_h{};
   int32_t pad_w{};
-  int32_t matmul_m{};
-  int32_t matmul_n{};
-  int32_t matmul_k{};
   size_t input_elements{};
   size_t weight_elements{};
   size_t bias_elements{};
-  size_t column_elements{};
   size_t output_elements{};
   bool has_bias{};
 };
@@ -670,6 +700,7 @@ inline ConvShape ValidateConvShapes(
   if (input.size() != 4 || weight.size() != 4) {
     throw std::invalid_argument("RVNPU Conv requires rank-4 NCHW tensors");
   }
+  ValidateConvAttributeValues(attributes);
   const int32_t batch = CheckedDimension(input[0], "Conv batch");
   const int32_t input_channels =
       CheckedDimension(input[1], "Conv input channels");
@@ -682,46 +713,79 @@ inline ConvShape ValidateConvShapes(
   const int32_t kernel_h = CheckedDimension(weight[2], "Conv kernel height");
   const int32_t kernel_w = CheckedDimension(weight[3], "Conv kernel width");
 
-  if (batch != 1 || attributes.group != 1 ||
-      attributes.auto_pad != "NOTSET" || input_channels != weight_channels) {
-    throw std::invalid_argument(
-        "RVNPU Conv requires batch=1, group=1 and auto_pad=NOTSET");
-  }
-  ValidateSpatialVector(attributes.dilations, 2, "Conv dilations");
-  ValidateSpatialVector(attributes.strides, 2, "Conv strides");
-  ValidateSpatialVector(attributes.pads, 4, "Conv pads");
-  if (attributes.dilations != std::vector<int64_t>{1, 1} ||
-      (kernel_h != 1 && kernel_h != 3) || kernel_w != kernel_h ||
-      (attributes.strides[0] != 1 && attributes.strides[0] != 2) ||
-      (attributes.strides[1] != 1 && attributes.strides[1] != 2) ||
-      attributes.pads[0] != attributes.pads[2] ||
-      attributes.pads[1] != attributes.pads[3]) {
-    throw std::invalid_argument("RVNPU Conv attributes are unsupported");
-  }
+  const int32_t group = CheckedDimension(attributes.group, "Conv group");
+  if (input_channels % group || output_channels % group ||
+      input_channels / group != weight_channels)
+    throw ConvModelError("Conv group/channel/weight mismatch");
+  if (attributes.dilations.size() != 2 || attributes.strides.size() != 2 ||
+      attributes.pads.size() != 4)
+    throw ConvModelError("Conv spatial attributes have incorrect rank");
   if (!attributes.kernel_shape.empty() &&
       attributes.kernel_shape !=
           std::vector<int64_t>{kernel_h, kernel_w}) {
-    throw std::invalid_argument("RVNPU Conv kernel_shape does not match W");
+    throw ConvModelError("RVNPU Conv kernel_shape does not match W");
   }
 
   const int32_t stride_h =
       CheckedDimension(attributes.strides[0], "Conv stride height");
   const int32_t stride_w =
       CheckedDimension(attributes.strides[1], "Conv stride width");
-  const int32_t pad_h = static_cast<int32_t>(attributes.pads[0]);
-  const int32_t pad_w = static_cast<int32_t>(attributes.pads[1]);
+  const int32_t dilation_h =
+      CheckedDimension(attributes.dilations[0], "Conv dilation height");
+  const int32_t dilation_w =
+      CheckedDimension(attributes.dilations[1], "Conv dilation width");
+  const int32_t effective_h = CheckedDimension(
+      int64_t(kernel_h - 1) * dilation_h + 1, "Conv effective height");
+  const int32_t effective_w = CheckedDimension(
+      int64_t(kernel_w - 1) * dilation_w + 1, "Conv effective width");
+  auto pads = attributes.pads;
+  for (auto pad : pads)
+    if (pad < 0 || pad > std::numeric_limits<int32_t>::max())
+      throw std::invalid_argument("Conv padding out of range");
+  if (attributes.auto_pad != "NOTSET") {
+    if (std::any_of(pads.begin(), pads.end(), [](int64_t p) { return p != 0; }))
+      throw std::invalid_argument("Conv auto_pad conflicts with explicit pads");
+    if (attributes.auto_pad == "VALID") {
+      pads = {0, 0, 0, 0};
+    } else if (attributes.auto_pad == "SAME_UPPER" ||
+               attributes.auto_pad == "SAME_LOWER") {
+      const int64_t total_h = std::max<int64_t>(
+          0, ((int64_t(input_h) - 1) / stride_h) * stride_h + effective_h - input_h);
+      const int64_t total_w = std::max<int64_t>(
+          0, ((int64_t(input_w) - 1) / stride_w) * stride_w + effective_w - input_w);
+      const bool lower = attributes.auto_pad == "SAME_LOWER";
+      pads = {(total_h + lower) / 2, (total_w + lower) / 2,
+              total_h / 2, total_w / 2};
+      pads[2] = total_h - pads[0];
+      pads[3] = total_w - pads[1];
+    } else {
+      throw std::invalid_argument("Unknown Conv auto_pad");
+    }
+  }
+  const int32_t pad_h = static_cast<int32_t>(pads[0]);
+  const int32_t pad_w = static_cast<int32_t>(pads[1]);
   const int32_t output_h = SpatialOutputDimension(
-      input_h, kernel_h, stride_h, pad_h, pad_h, "Conv output height");
+      input_h, effective_h, stride_h, pad_h, static_cast<int32_t>(pads[2]),
+      "Conv output height");
   const int32_t output_w = SpatialOutputDimension(
-      input_w, kernel_w, stride_w, pad_w, pad_w, "Conv output width");
+      input_w, effective_w, stride_w, pad_w, static_cast<int32_t>(pads[3]),
+      "Conv output width");
 
   if (bias != nullptr &&
       (bias->size() != 1 || (*bias)[0] != output_channels)) {
-    throw std::invalid_argument("RVNPU Conv bias must have shape [M]");
+    throw ConvModelError("RVNPU Conv bias must have shape [M]");
   }
 
   ConvShape result;
-  result.output_shape = {1, output_channels, output_h, output_w};
+  result.output_shape = {batch, output_channels, output_h, output_w};
+  result.batch = batch;
+  result.group = group;
+  result.input_channels_per_group = input_channels / group;
+  result.output_channels_per_group = output_channels / group;
+  result.dilation_h = dilation_h;
+  result.dilation_w = dilation_w;
+  result.pad_bottom = static_cast<int32_t>(pads[2]);
+  result.pad_right = static_cast<int32_t>(pads[3]);
   result.input_channels = input_channels;
   result.input_h = input_h;
   result.input_w = input_w;
@@ -734,32 +798,27 @@ inline ConvShape ValidateConvShapes(
   result.stride_w = stride_w;
   result.pad_h = pad_h;
   result.pad_w = pad_w;
-  result.matmul_m = CheckedSizeDimension(
-      CheckedMultiply(static_cast<size_t>(output_h), output_w,
-                      "Conv MatMul M"),
-      "Conv MatMul M");
-  result.matmul_n = output_channels;
-  result.matmul_k = CheckedSizeDimension(
+  const size_t kernel_elements =
       CheckedMultiply(
-          CheckedMultiply(static_cast<size_t>(input_channels), kernel_h,
-                          "Conv MatMul K"),
-          kernel_w, "Conv MatMul K"),
-      "Conv MatMul K");
+          CheckedMultiply(static_cast<size_t>(weight_channels), kernel_h,
+                          "Conv weight kernel"),
+          kernel_w, "Conv weight kernel");
+  const size_t output_plane = CheckedMultiply(
+      static_cast<size_t>(output_h), output_w, "Conv output plane");
   result.input_elements = CheckedMultiply(
       CheckedMultiply(static_cast<size_t>(input_channels), input_h,
                       "Conv input"),
       input_w, "Conv input");
   result.weight_elements = CheckedMultiply(
-      static_cast<size_t>(output_channels), result.matmul_k, "Conv weight");
+      static_cast<size_t>(output_channels), kernel_elements, "Conv weight");
   result.bias_elements = bias == nullptr ? 0 : output_channels;
-  result.column_elements = CheckedMultiply(
-      static_cast<size_t>(result.matmul_m), result.matmul_k, "Conv im2col");
   result.output_elements = CheckedMultiply(
-      static_cast<size_t>(result.matmul_m), result.matmul_n, "Conv output");
+      output_plane, static_cast<size_t>(output_channels), "Conv output");
+  result.input_elements = CheckedMultiply(result.input_elements, batch, "Conv batch input");
+  result.output_elements = CheckedMultiply(result.output_elements, batch, "Conv batch output");
   result.has_bias = bias != nullptr;
   CheckedMultiply(result.input_elements, sizeof(float), "Conv input bytes");
   CheckedMultiply(result.weight_elements, sizeof(float), "Conv weight bytes");
-  CheckedMultiply(result.column_elements, sizeof(float), "Conv im2col bytes");
   CheckedMultiply(result.output_elements, sizeof(float), "Conv output bytes");
   return result;
 }

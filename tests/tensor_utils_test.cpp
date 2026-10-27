@@ -39,8 +39,6 @@ int main() {
                                                                  {32, 32}},
            std::pair<std::vector<int64_t>, std::vector<int64_t>>{
                {static_cast<int64_t>(INT32_MAX) + 1, 1}, {1, 1}},
-           std::pair<std::vector<int64_t>, std::vector<int64_t>>{
-               {INT32_MAX, INT32_MAX}, {INT32_MAX, INT32_MAX}},
        }) {
     rejected = false;
     try {
@@ -51,6 +49,12 @@ int main() {
     }
     assert(rejected);
   }
+
+  // These element/byte counts fit size_t on the supported 64-bit host.
+  // Shape validation does not allocate these tensors.
+  const auto large = rvnpu::ValidateMatMulShapes(
+      {INT32_MAX, INT32_MAX}, {INT32_MAX, INT32_MAX});
+  assert(large.a_elements == size_t(INT32_MAX) * INT32_MAX);
 
   const auto unary = rvnpu::ValidateUnaryTensorShape({2, 3, 5}, "Sigmoid");
   assert(unary.elements == 30);
@@ -93,13 +97,9 @@ int main() {
   }
   assert(rejected);
 
-  rejected = false;
-  try {
-    static_cast<void>(rvnpu::ValidateUnaryTensorShape({}, "Sigmoid"));
-  } catch (const std::invalid_argument &) {
-    rejected = true;
-  }
-  assert(rejected);
+  // Scalars are supported by the current shape utility.
+  const auto scalar = rvnpu::ValidateUnaryTensorShape({}, "Sigmoid");
+  assert(scalar.elements == 1 && scalar.output_shape.empty());
 
   rvnpu::ConvAttributes conv_attributes;
   conv_attributes.kernel_shape = {3, 3};
@@ -109,9 +109,8 @@ int main() {
   const auto conv = rvnpu::ValidateConvShapes(
       {1, 3, 64, 64}, {16, 3, 3, 3}, &bias_shape, conv_attributes);
   assert((conv.output_shape == std::vector<int64_t>{1, 16, 32, 32}));
-  assert(conv.matmul_m == 1024 && conv.matmul_n == 16 &&
-         conv.matmul_k == 27);
-  assert(conv.column_elements == 1024 * 27 && conv.has_bias);
+  assert(conv.output_elements == 1024 * 16);
+  assert(conv.weight_elements == 16 * 27 && conv.has_bias);
 
   rejected = false;
   try {
@@ -177,8 +176,8 @@ int main() {
 
   const auto gather_nd =
       rvnpu::ValidateGatherNdShape({8400}, {64, 1}, 0, sizeof(int64_t));
-  assert(gather_nd.tuple_count == 64 && gather_nd.tuple_size == 1 &&
-         gather_nd.slice_elements == 1 && gather_nd.output_elements == 64);
+  assert(gather_nd.rows == 64 && gather_nd.index_depth == 1 &&
+         gather_nd.data_elements == 8400 && gather_nd.output_elements == 64);
 
   rejected = false;
   try {

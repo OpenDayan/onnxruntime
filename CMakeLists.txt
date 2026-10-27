@@ -111,9 +111,13 @@ add_executable(test_rvnpu_transform tools/test_rvnpu_transform.cpp)
 target_include_directories(test_rvnpu_transform PRIVATE src)
 target_link_libraries(test_rvnpu_transform PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_conv_maxpool tools/test_rvnpu_conv_maxpool.cpp)
-target_include_directories(test_rvnpu_conv_maxpool PRIVATE src)
-target_link_libraries(test_rvnpu_conv_maxpool PRIVATE rvnpu_runtime_bridge)
+add_executable(test_rvnpu_conv tools/test_rvnpu_conv.cpp)
+target_include_directories(test_rvnpu_conv PRIVATE src)
+target_link_libraries(test_rvnpu_conv PRIVATE rvnpu_runtime_bridge)
+
+add_executable(test_rvnpu_maxpool tools/test_rvnpu_maxpool.cpp)
+target_include_directories(test_rvnpu_maxpool PRIVATE src)
+target_link_libraries(test_rvnpu_maxpool PRIVATE rvnpu_runtime_bridge)
 
 add_executable(test_rvnpu_topk tools/test_rvnpu_topk.cpp)
 target_include_directories(test_rvnpu_topk PRIVATE src)
