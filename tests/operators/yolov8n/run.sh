@@ -3,24 +3,25 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
-YOLO_RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_yolov8n"
-PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"
+PYTHON="${PYTHON_EXECUTABLE:-python3}"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"
-DATA_DIR="${MODEL_DIR}/data"
-if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
-  DATA_DIR="${MODEL_DIR}/image_data"
-fi
+POSTPROCESS="${YOLO_POSTPROCESS:-manual}"   # manual(默认) | official
+IMAGE="${RVNPU_YOLO_IMAGE:-${ROOT_DIR}/tests/assets/bus.jpg}"
 
-EXTRA_ARGS=()
-if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
-  RESULT_DIR="${MODEL_DIR}/image_results"
-  EXTRA_ARGS=(--smoke --results-json "${RESULT_DIR}/results.json")
+if [[ "${POSTPROCESS}" == "manual" ]]; then
+  MODEL="${MODEL_DIR}/yolov8n_manual.onnx"
+else
+  MODEL="${MODEL_DIR}/yolov8n.onnx"
 fi
-"${YOLO_RUNNER}" --model "${MODEL_DIR}/yolov8n.onnx" \
-  --plugin "${PLUGIN}" --kernel-elf "${ELF}" --data-dir "${DATA_DIR}" \
-  "${EXTRA_ARGS[@]}"
-if [[ -n "${RVNPU_YOLO_IMAGE:-}" ]]; then
-  "${PYTHON_EXECUTABLE:-python3}" "${ROOT_DIR}/tests/yolov8n_image.py" draw \
-    --metadata "${DATA_DIR}/image_meta.json" \
-    --results "${RESULT_DIR}/results.json" --output-dir "${RESULT_DIR}"
-fi
+name="$(basename "${IMAGE%.*}")"
+data_dir="${MODEL_DIR}/images/${name}/data"
+result_dir="${MODEL_DIR}/images/${name}_${POSTPROCESS}/results"
+
+echo "========== yolov8n image=${name} postprocess=${POSTPROCESS} =========="
+"${ROOT_DIR}/build/linux/test_rvnpu_yolov8n" --model "${MODEL}" \
+  --plugin "${ROOT_DIR}/build/linux/librvnpu_ep.so" \
+  --kernel-elf "${ELF}" --data-dir "${data_dir}" \
+  --results-json "${result_dir}/results.json"
+"${PYTHON}" "${ROOT_DIR}/tools/yolov8n_image.py" draw \
+  --metadata "${data_dir}/image_meta.json" \
+  --results "${result_dir}/results.json" --output-dir "${result_dir}"

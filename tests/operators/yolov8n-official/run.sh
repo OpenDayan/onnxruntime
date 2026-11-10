@@ -2,4 +2,4 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-bash "${ROOT_DIR}/tests/operators/yolov8n/prepare.sh"
+YOLO_POSTPROCESS=official bash "${ROOT_DIR}/tests/operators/yolov8n/run.sh"

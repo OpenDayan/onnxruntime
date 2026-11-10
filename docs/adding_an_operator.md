@@ -22,8 +22,6 @@
 
 YOLOv8n 中的普通 `Gather`、shape 控制和输出打包节点留给 ORT 处理。后处理中的 INT64 类别编号由 RVNPU `GatherND` 读取。
 
-`origin/conv-kernel` 已有 BF16/低比特直接 Conv 导出，但其 host 测试仍使用旧版 npu-runtime 加载 ABI；当前仅作 kernel 设计参考，尚未接入 Plugin EP。
-
 ## 2. 调用链
 
 以 Conv 为例：
@@ -32,29 +30,13 @@ YOLOv8n 中的普通 `Gather`、shape 控制和输出打包节点留给 ORT 处�
 ONNX ai.onnx::Conv
   -> RvnpuEp::SupportsConv
        src/plugin/ep.cpp
-       检查 schema 版本、dtype、静态形状和属性
-
   -> ConvKernel::ComputeImpl
        src/ops/conv/conv.cpp
-       读取 ORT tensor，创建输出
-
   -> DeviceContext::RunConv
        src/runtime/device_context.cpp
-       分配 device buffer，完成 H2D、launch、D2H
-
-  -> im2col_nchw_fp32
-       npu-kernels/kernel/kernel_im2col.cpp
-
-  -> triton_matmul_fp32_kernel
-       npu-kernels/kernel/triton_matmul_bridge.cpp
-
-  -> matmul_kernel
-       RVNPU-compiler 从 integration/kernels/matmul.py 生成
-
-  -> QEMU + cmodel
+  -> dayan-base/demo/onnx/kernel_*.cpp
+  -> TestCluster + dayan_server
 ```
-
-MatMul 和 Conv 的接口仍接收、输出 FP32 tensor，内部使用一次 BF16 MatMul 和 FP32 累加。
 
 ## 3. 新增一个算子要改哪些文件
 
@@ -76,25 +58,21 @@ src/runtime/kernel_catalog.h
 src/runtime/device_context.h/.cpp
   RunMatMul、buffer、参数顺序和 kernel launch
 
-npu-kernels/kernel/triton_matmul_bridge.cpp
-  npu-runtime 可调用的稳定 device ABI
-
 tests/operators/matmul/prepare.sh
 tests/operators/matmul/run.sh
-tools/test_rvnpu_matmul.cpp
+tests/direct/test_rvnpu_matmul.cpp
   device kernel 数值测试
 
 CMakeLists.txt
   加入新源文件和测试工具
 ```
 
-如果算子不经过 Triton，可参考 `npu-kernels/kernel/kernel_topk.cpp` 或
-`npu-kernels/kernel/kernel_nms.cpp`，Plugin 侧结构不变。
+设备内核位于 dayan-base 的 `demo/onnx/`，Plugin 侧结构不变。
 
 ## 4. 添加步骤
 
 1. 查 ONNX schema，写明 opset、dtype、shape、属性、广播和输出语义。
-2. 在 `npu-kernels` 实现稳定 device 入口，先用 device kernel 测试对比 CPU。
+2. 在 `dayan-base/demo/onnx/` 实现设备内核，先用 direct 测试对比 CPU。
 3. 在 `kernel_catalog.h` 登记符号，在 `DeviceContext` 增加 `Run<Operator>`。
 4. 新建 `src/ops/<name>/`，实现 ORT kernel。
 5. 在 `ep.cpp` 只接管确定支持的节点；其他合法配置留给 CPU。
@@ -103,9 +81,8 @@ CMakeLists.txt
 8. 运行：
 
 ```bash
-./scripts/build_device_kernel.sh
-./scripts/configure_build.sh
-./scripts/test_operator.sh <name>
+./scripts/build_dayan_kernels.sh
+./scripts/run_dayan_tests.sh <name>
 ```
 
 测试包含 device kernel 数值检查，以及标准 ONNX 模型的一次 CPU/RVNPU 输出对比。ORT 测试必须在内部确认目标节点确实分配给 RVNPU。

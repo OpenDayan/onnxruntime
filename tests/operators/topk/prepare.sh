@@ -2,5 +2,5 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-"${PYTHON_EXECUTABLE:-python3}" "${ROOT_DIR}/tests/make_topk_models.py" \
+"${PYTHON_EXECUTABLE:-python3}" "${ROOT_DIR}/tests/models/make_topk_models.py" \
   --output-dir "${ROOT_DIR}/build/operators/topk"

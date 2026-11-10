@@ -4,7 +4,9 @@
 #
 # 前置：dayan_server 已在跑（DAYAN_SERVER_SOCKET，默认 /tmp/dayan-server.sock）。
 # 用法：run_dayan_tests.sh [--report] [op ...]
-#       不带参数跑除 yolov8n* 外的全部算子（yolo 设备超时，速度问题解决前默认跳过）。
+#       run_dayan_tests.sh yolov8n           # bus.jpg + manual 后处理(默认)
+#       run_dayan_tests.sh yolov8n-official  # bus.jpg + 官方后处理
+#       RVNPU_YOLO_IMAGE=xxx.jpg ...         # 可选,替换测试图片
 #
 #   --report   打印每个算子的测试张量尺寸，并测出该算子消耗的仿真周期，末尾汇总成表。
 #              等价于 DAYAN_REPORT=1。
@@ -12,9 +14,9 @@
 #              刷新粒度约 1 秒，因此耗时很短的算子可能读到 0，只能算上界。
 #              汇总同时写入 ${DAYAN_CYCLE_CSV}（默认 /tmp/dy-op-cycles.csv）。
 #
-#   --direct-ops  dayan 版 test_direct_ops：跑一组小尺寸代表算子（直测工具，自带数值
+#   --direct-ops  direct 性能测试：跑一组小尺寸代表算子（直测工具，自带数值
 #                 校验），每个样本用 TUI Cycle 差值测周期（扣 22k 进程固定开销），再按
-#                 legacy test_direct_ops.sh 的速率模型外推 yolov8n_64 整网总周期。
+#                 direct 测试的速率模型外推 yolov8n_64 整网总周期。
 #                 结果写 build/yolo_representative/yolov8n_64_dayan/。
 #     --conv S    覆盖 conv 样本尺寸，格式 "IN:W:STRIDE:PAD"，如
 #                 "1,3,15,17:5,3,3,3:2,2:1,1"（默认即此值；换大尺寸可提高 conv 速率
@@ -22,6 +24,7 @@
 #                 ssh/zsh 多层引号下会被当命令分隔。
 #     --out DIR   结果目录（默认 build/yolo_representative/yolov8n_64_dayan）。
 #
+# 不带参数运行全部算子和 YOLOv8n 真实图片测试。
 # 注意：RTL 目前没有实现周期时间戳寄存器（device/include/platform_regs.h 里的
 # DAYAN_PCU_CYCLE 只是预留槽位），npu_profile_pcu_read() 会返回 -ENODATA，
 # 所以周期只能这样从 TestCluster 侧量，走不了 dyperf --pcu。
@@ -35,7 +38,7 @@ CYCLE_CSV="${DAYAN_CYCLE_CSV:-/tmp/dy-op-cycles.csv}"
 REPORT=0
 [[ "${DAYAN_REPORT:-0}" == "1" ]] && REPORT=1
 DIRECT_OPS=0
-CONV_SPEC="1,3,15,17;5,3,3,3;2,2;1,1"
+CONV_SPEC="1,3,15,17:5,3,3,3:2,2:1,1"
 OUT_DIR=""
 
 POS=()
@@ -66,7 +69,6 @@ setup_shim() {
   ln -s "${ROOT_DIR}/scripts" "${SHIM}/scripts" 2>/dev/null
   ln -s "${ROOT_DIR}/build/dayan-migration" "${SHIM}/build/linux"
   ln -s "${ROOT_DIR}/build/models" "${SHIM}/build/models"
-  ln -s "${ROOT_DIR}/build/yolov8n" "${SHIM}/build/yolov8n" 2>/dev/null
   for d in operators yolo_representative; do
     ln -s "${ROOT_DIR}/build/${d}" "${SHIM}/build/${d}" 2>/dev/null
   done
@@ -204,7 +206,7 @@ print_summary() {
   echo "（周期明细已写入 ${CYCLE_CSV}）"
 }
 
-# ---------- dayan 版 test_direct_ops（--direct-ops） ----------
+# ---------- direct 性能测试（--direct-ops） ----------
 
 # 每个直测样本一次进程：TUI Cycle 前后差值，再扣掉进程固定开销（约 22k，含固件
 # 上下文加载/启动），得到该算子样本的净周期。TUI 刷新 ~1s，短样本读数偏粗。
@@ -244,11 +246,15 @@ run_direct_sample() {
 }
 
 direct_ops_summarize() {
-  python3 - "${OUT_DIR:-${ROOT_DIR}/build/yolo_representative/yolov8n_64_dayan}" <<'PY'
+  python3 - "${OUT_DIR:-${ROOT_DIR}/build/yolo_representative/yolov8n_64_dayan}" "${ROOT_DIR}" <<'PY'
 import csv, json, math, sys
 from pathlib import Path
 out_dir = Path(sys.argv[1])
-manifest = json.loads(Path('/workspace/onnxruntime-rvnpu/build/yolov8n_64/perf_manifest.json').read_text())
+manifest_path = Path(sys.argv[2]) / "build/yolov8n_64/perf_manifest.json"
+if not manifest_path.exists():
+    print(f"skip network extrapolation: missing {manifest_path}")
+    sys.exit(0)
+manifest = json.loads(manifest_path.read_text())
 entries = manifest['graph_entries']
 rows = list(csv.DictReader((out_dir / 'samples_dayan.csv').open()))
 samples = {r['name']: r for r in rows}
@@ -360,8 +366,8 @@ direct_ops() {
   IFS=':' read -r CONV_IN CONV_W CONV_S CONV_P <<<"${CONV_SPEC}"
   local conv_args="--input-shape ${CONV_IN} --weight-shape ${CONV_W} --stride ${CONV_S} --pad ${CONV_P} --bias"
 
-  # 对齐 legacy samples.csv 的算子覆盖。silu 在 yolo 图里表达为 sigmoid+mul，
-  # 不单测；transpose 整网占比 ~0 且 legacy 计数也是 0，不测；argmax 无直测入口。
+  # 覆盖 YOLO 代表算子。silu 在 yolo 图里表达为 sigmoid+mul，
+  # 不单测；transpose 整网占比 ~0，不测；argmax 无直测入口。
   # conv 放最后：大 conv 会让设备进入中断堆积的劣化态（后续样本周期被空转
   # 计数污染，maxpool 曾虚高 11 倍），先测小样本再测 conv，劣化只影响它自己。
   local samples=(
@@ -404,7 +410,8 @@ if [[ $# -gt 0 ]]; then
   OPS=("$@")
 else
   OPS=(add concat conv div matmul maxpool mul nms reduce_max resize
-       selection sigmoid silu slice softmax split sub topk transpose)
+       selection sigmoid silu slice softmax split sub topk transpose
+       yolov8n)
 fi
 
 if [[ ${REPORT} == 1 ]] && ! tc_available; then

@@ -3,7 +3,8 @@
 # （DAYAN_KERNEL_OBJECT_DIR）链接。
 set -euo pipefail
 
-DAYAN_ROOT="${DAYAN_ROOT:-/workspace/dayan-base}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DAYAN_ROOT="${DAYAN_ROOT:-${ROOT_DIR}/../dayan-base}"
 OUT="${DAYAN_ROOT}/build/demo/onnx"
 DYCC="${DAYAN_ROOT}/host/dycc/dycc"
 

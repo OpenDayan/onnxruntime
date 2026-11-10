@@ -27,7 +27,7 @@ def save_case(
         "output", TensorProto.FLOAT, [None, None, None, None]
     )
     graph = helper.make_graph(
-        [node], "rvnpu_conv_maxpool_test", [graph_input], [graph_output], initializers
+        [node], "rvnpu_maxpool_test", [graph_input], [graph_output], initializers
     )
     model = helper.make_model(
         graph,
@@ -42,31 +42,6 @@ def save_case(
 
     input_data = values(input_shape, 1)
     input_data.tofile(directory / "input.bin")
-
-
-def make_conv_cases(output_dir: Path) -> None:
-    weight = values([5, 3, 3, 3], 2)
-    bias = values([5], 3)
-    supported = helper.make_node(
-        "Conv",
-        ["input", "weight", "bias"],
-        ["output"],
-        name="rvnpu_test_conv",
-        dilations=[1, 1],
-        group=1,
-        kernel_shape=[3, 3],
-        pads=[1, 1, 1, 1],
-        strides=[2, 2],
-    )
-    save_case(
-        output_dir / "supported",
-        supported,
-        [1, 3, 15, 17],
-        [
-            numpy_helper.from_array(weight, "weight"),
-            numpy_helper.from_array(bias, "bias"),
-        ],
-    )
 
 
 def make_maxpool_cases(output_dir: Path) -> None:
@@ -86,13 +61,9 @@ def make_maxpool_cases(output_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--op", choices=["conv", "maxpool"], required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    if args.op == "conv":
-        make_conv_cases(args.output_dir)
-    else:
-        make_maxpool_cases(args.output_dir)
+    make_maxpool_cases(args.output_dir)
 
 
 if __name__ == "__main__":

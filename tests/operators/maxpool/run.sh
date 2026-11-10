@@ -3,17 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
-DIRECT_TEST="${ROOT_DIR}/build/linux/test_rvnpu_conv_maxpool"
+DIRECT_TEST="${ROOT_DIR}/build/linux/test_rvnpu_maxpool"
 RUNNER="${ROOT_DIR}/build/linux/test_rvnpu_onnx_model"
 PLUGIN="${ROOT_DIR}/build/linux/librvnpu_ep.so"
 DATA="${ROOT_DIR}/build/operators/maxpool"
 
 echo "[1/2] Direct kernel 数值测试"
-"${DIRECT_TEST}" --kernel-elf "${ELF}" --op maxpool \
+"${DIRECT_TEST}" --kernel-elf "${ELF}" \
   --input-shape 1,3,8,9 --kernel 2,2 --stride 2,2 --pad 0,0
-"${DIRECT_TEST}" --kernel-elf "${ELF}" --op maxpool \
+"${DIRECT_TEST}" --kernel-elf "${ELF}" \
   --input-shape 1,3,8,9 --kernel 3,3 --stride 2,2 --pad 1,1
-"${DIRECT_TEST}" --kernel-elf "${ELF}" --op maxpool \
+"${DIRECT_TEST}" --kernel-elf "${ELF}" \
   --input-shape 1,3,8,9 --kernel 5,5 --stride 1,1 --pad 2,2
 
 echo

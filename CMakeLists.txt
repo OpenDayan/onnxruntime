@@ -8,8 +8,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime source or SDK root")
 set(ONNXRUNTIME_LIB_DIR "" CACHE PATH "Directory containing libonnxruntime")
-set(DAYAN_RUNTIME_ROOT "/workspace/dayan-base" CACHE PATH "dayan-base repository root")
-set(DAYAN_KERNEL_ROOT "/workspace/dayan-base" CACHE PATH "dayan-base repository root")
+set(DAYAN_RUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../dayan-base" CACHE PATH "dayan-base repository root")
+set(DAYAN_KERNEL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../dayan-base" CACHE PATH "dayan-base repository root")
 set(DAYAN_KERNEL_OBJECT_DIR "${DAYAN_KERNEL_ROOT}/build/demo/onnx" CACHE PATH "dycc-generated ONNX kernel objects")
 file(GLOB DAYAN_KERNEL_OBJECTS "${DAYAN_KERNEL_OBJECT_DIR}/*.o")
 
@@ -83,83 +83,80 @@ set_target_properties(rvnpu_ep PROPERTIES
 target_link_options(rvnpu_ep PRIVATE
   "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/rvnpu_ep.lds")
 
-add_executable(test_rvnpu_tiny_cnn tools/test_rvnpu_tiny_cnn.cpp)
+add_executable(test_rvnpu_tiny_cnn tests/integration/test_rvnpu_tiny_cnn.cpp)
 target_include_directories(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_tiny_cnn PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_onnx_model tools/test_rvnpu_onnx_model.cpp)
+add_executable(test_rvnpu_onnx_model tests/integration/test_rvnpu_onnx_model.cpp)
 target_include_directories(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_onnx_model PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_matmul tools/test_rvnpu_matmul.cpp)
+add_executable(test_rvnpu_matmul tests/direct/test_rvnpu_matmul.cpp)
 target_include_directories(test_rvnpu_matmul PRIVATE src)
 target_link_libraries(test_rvnpu_matmul PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_elementwise tools/test_rvnpu_elementwise.cpp)
+add_executable(test_rvnpu_elementwise tests/direct/test_rvnpu_elementwise.cpp)
 target_include_directories(test_rvnpu_elementwise PRIVATE src)
 target_link_libraries(test_rvnpu_elementwise PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_tensor_copy tools/test_rvnpu_tensor_copy.cpp)
+add_executable(test_rvnpu_tensor_copy tests/direct/test_rvnpu_tensor_copy.cpp)
 target_include_directories(test_rvnpu_tensor_copy PRIVATE src)
 target_link_libraries(test_rvnpu_tensor_copy PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_transform tools/test_rvnpu_transform.cpp)
+add_executable(test_rvnpu_transform tests/direct/test_rvnpu_transform.cpp)
 target_include_directories(test_rvnpu_transform PRIVATE src)
 target_link_libraries(test_rvnpu_transform PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_conv tools/test_rvnpu_conv.cpp)
+add_executable(test_rvnpu_conv tests/direct/test_rvnpu_conv.cpp)
 target_include_directories(test_rvnpu_conv PRIVATE src)
 target_link_libraries(test_rvnpu_conv PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_maxpool tools/test_rvnpu_maxpool.cpp)
+add_executable(test_rvnpu_maxpool tests/direct/test_rvnpu_maxpool.cpp)
 target_include_directories(test_rvnpu_maxpool PRIVATE src)
 target_link_libraries(test_rvnpu_maxpool PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_topk tools/test_rvnpu_topk.cpp)
+add_executable(test_rvnpu_topk tests/direct/test_rvnpu_topk.cpp)
 target_include_directories(test_rvnpu_topk PRIVATE src)
 target_link_libraries(test_rvnpu_topk PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_topk_onnx tools/test_rvnpu_topk_onnx.cpp)
+add_executable(test_rvnpu_topk_onnx tests/integration/test_rvnpu_topk_onnx.cpp)
 target_include_directories(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_topk_onnx PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_nms tools/test_rvnpu_nms.cpp)
+add_executable(test_rvnpu_nms tests/direct/test_rvnpu_nms.cpp)
 target_include_directories(test_rvnpu_nms PRIVATE src)
 target_link_libraries(test_rvnpu_nms PRIVATE rvnpu_runtime_bridge)
 
-add_executable(test_rvnpu_nms_onnx tools/test_rvnpu_nms_onnx.cpp)
+add_executable(test_rvnpu_nms_onnx tests/integration/test_rvnpu_nms_onnx.cpp)
 target_include_directories(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_nms_onnx PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_yolo_postprocess tools/test_rvnpu_yolo_postprocess.cpp)
+add_executable(test_rvnpu_yolo_postprocess tests/integration/test_rvnpu_yolo_postprocess.cpp)
 target_include_directories(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_yolo_postprocess PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_yolov8n tools/test_rvnpu_yolov8n.cpp)
-add_executable(test_rvnpu_yolo_perf tools/test_rvnpu_yolo_perf.cpp)
-target_include_directories(test_rvnpu_yolo_perf PRIVATE src "${NPU_RUNTIME_ROOT}/include")
-target_link_libraries(test_rvnpu_yolo_perf PRIVATE rvnpu_runtime_bridge)
+add_executable(test_rvnpu_yolov8n tests/integration/test_rvnpu_yolov8n.cpp)
 target_include_directories(test_rvnpu_yolov8n PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
 target_link_libraries(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_LIBRARY}")
 set_target_properties(test_rvnpu_yolov8n PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
 enable_testing()
-add_executable(tensor_utils_test tests/tensor_utils_test.cpp)
+add_executable(tensor_utils_test tests/unit/tensor_utils_test.cpp)
 target_include_directories(tensor_utils_test PRIVATE src)
 add_test(NAME tensor_utils_test COMMAND tensor_utils_test)
 
-add_executable(cpu_reference_conv_test tests/cpu_reference_conv_test.cpp)
+add_executable(cpu_reference_conv_test tests/unit/cpu_reference_conv_test.cpp)
 target_include_directories(cpu_reference_conv_test PRIVATE src)
 add_test(NAME cpu_reference_conv_test COMMAND cpu_reference_conv_test)
 
