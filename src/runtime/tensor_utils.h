@@ -30,6 +30,8 @@ struct UnaryTensorShape {
 struct BinaryElementwiseShape {
   std::vector<int64_t> output_shape;
   std::array<uint32_t, 4> output_dims{};
+  std::array<uint32_t, 4> lhs_dims{};
+  std::array<uint32_t, 4> rhs_dims{};
   std::array<uint32_t, 4> broadcast_dims{};
   size_t lhs_elements{};
   size_t rhs_elements{};
@@ -470,15 +472,25 @@ inline TransposeShape ValidateTransposeShape(
     const std::vector<int64_t> &input, const std::vector<int64_t> &perm) {
   const bool rank2 =
       input.size() == 2 && perm == std::vector<int64_t>({1, 0});
-  const bool rank3 =
+  // The tiled path uses C<=128 and K aligned to 16.  A degenerate K=1
+  // post-processing tensor is also safe: the device kernel deliberately
+  // falls back to the scalar path when no URAM tile fits.  Keeping this
+  // narrow exception lets the manual YOLO graph keep this small transpose on
+  // NPU without weakening the fast-path contract for general tensors.
+  const bool rank3_tiled =
       input.size() == 3 && perm == std::vector<int64_t>({0, 2, 1}) &&
       input[1] > 0 && input[1] <= 128 && input[2] > 0 &&
       input[2] % 16 == 0;
+  const bool rank3_degenerate =
+      input.size() == 3 && perm == std::vector<int64_t>({0, 2, 1}) &&
+      input[0] > 0 && input[1] > 0 && input[2] == 1 &&
+      input[0] <= 4 && input[1] <= 16384;
+  const bool rank3 = rank3_tiled || rank3_degenerate;
   const bool rank4 =
       input.size() == 4 && perm == std::vector<int64_t>({0, 2, 1, 3});
   if (!rank2 && !rank3 && !rank4)
     throw std::invalid_argument(
-        "RVNPU Transpose requires rank-2 perm [1,0], rank-3 [N,C,K], C<=128, K divisible by 16 and perm [0,2,1], or rank-4 perm [0,2,1,3]");
+        "RVNPU Transpose requires rank-2 perm [1,0], rank-3 tiled [N,C,K] with C<=128 and K divisible by 16, rank-3 degenerate K=1 within bounds, or rank-4 perm [0,2,1,3]");
   TransposeShape result;
   result.rank = static_cast<int32_t>(input.size());
   if (rank2) {
@@ -646,21 +658,17 @@ inline BinaryElementwiseShape ValidateBinaryElementwiseShapes(
     output[rank - 1 - offset] = lhs_dim == 1 ? rhs_dim : lhs_dim;
   }
 
-  const bool lhs_is_output = lhs == output;
-  const bool rhs_is_output = rhs == output;
-  if (!lhs_is_output && !rhs_is_output) {
-    throw std::invalid_argument(
-        std::string(label) +
-        " requires one input shape to equal the broadcast output shape");
-  }
-
   const auto output_info = ValidateUnaryTensorShape(output, label);
   BinaryElementwiseShape result;
   result.output_shape = std::move(output);
   result.output_dims = output_info.dims;
+  result.lhs_dims = lhs_info.dims;
+  result.rhs_dims = rhs_info.dims;
   result.lhs_elements = lhs_info.elements;
   result.rhs_elements = rhs_info.elements;
   result.output_elements = output_info.elements;
+  const bool lhs_is_output = lhs == result.output_shape;
+  const bool rhs_is_output = rhs == result.output_shape;
   result.swap_inputs = !lhs_is_output && rhs_is_output;
   result.broadcast_dims =
       result.swap_inputs ? lhs_info.dims : rhs_info.dims;

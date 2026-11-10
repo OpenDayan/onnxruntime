@@ -25,7 +25,12 @@ void PreserveError(int candidate, int *status) {
 
 } // namespace
 
-DayanRuntime::DayanRuntime() {
+void DayanRuntime::EnsureInitialized() {
+  std::call_once(initialized_, [this]() { Initialize(); });
+}
+
+void DayanRuntime::Initialize() {
+  four_core_ = false;
   npu_runtime_options_t options;
   npu_runtime_options_init(&options);
   if (const char *socket = std::getenv("DAYAN_SERVER_SOCKET")) {
@@ -33,6 +38,13 @@ DayanRuntime::DayanRuntime() {
       options.server_socket = socket;
   }
   RequireSuccess(npu_runtime_open(&runtime_, &options), "npu_runtime_open");
+  RequireSuccess(npu_runtime_get_uram_capacity(runtime_, &uram_capacity_),
+                 "npu_runtime_get_uram_capacity");
+  npu_runtime_topology_t topology{};
+  if (npu_runtime_get_topology(runtime_, &topology) == 0)
+    four_core_ = topology.cores_per_cluster >= 4 &&
+                 topology.enabled_cluster_mask != 0 &&
+                 (topology.enabled_core_mask & 0xfU) == 0xfU;
   try {
     RequireSuccess(npu_context_create(runtime_, nullptr, &context_),
                    "npu_context_create");
@@ -42,6 +54,8 @@ DayanRuntime::DayanRuntime() {
     if (context_ != nullptr)
       static_cast<void>(npu_context_destroy(context_));
     static_cast<void>(npu_runtime_close(runtime_));
+    stream_ = nullptr;
+    context_ = nullptr;
     runtime_ = nullptr;
     context_ = nullptr;
     throw;

@@ -18,6 +18,7 @@ public:
     std::string kernel_elf;
     std::string device_mode;
     std::unordered_set<std::string> enabled_ops;
+    std::unordered_set<std::string> disabled_ops;
     uint32_t device_id{};
   };
 

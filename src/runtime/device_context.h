@@ -41,6 +41,7 @@ struct MatmulBf16Config {
   uint64_t a_stride, bt_stride, c_stride;
 };
 int matmul_bf16_1c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
+int matmul_bf16_1c_small(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
 struct Conv2dTileConfig {
   uint32_t ci, co, wi, hi, wo, ho, wk, hk;
   uint32_t pad_l, pad_u, stride_w, stride_h, dilation_w, dilation_h;
@@ -52,31 +53,48 @@ struct Conv2dTileConfig {
 };
 static_assert(sizeof(Conv2dTileConfig) == 26U * sizeof(uint32_t),
               "Conv host/device ABI mismatch");
+bool conv2d_plan_tiles(Conv2dTileConfig *);
+#if defined(RVNPU_CONV_PROFILE)
+struct alignas(64) Conv2dProfileRecord {
+  uint64_t start, end, call_id, task, hart, completed, phase[16];
+};
+static_assert(sizeof(Conv2dProfileRecord) == 192, "Conv timing ABI mismatch");
+int conv2d_tile_4c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *,
+                  npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
+#else
 int conv2d_tile_4c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
+#endif
 
 namespace rvnpu {
 
 class DayanRuntime final {
 public:
-  DayanRuntime();
+  DayanRuntime() = default;
   ~DayanRuntime();
   DayanRuntime(const DayanRuntime &) = delete;
   DayanRuntime &operator=(const DayanRuntime &) = delete;
 
-  npu_context_t *context() const noexcept { return context_; }
-  npu_stream_t *stream() const noexcept { return stream_; }
+  npu_context_t *context() { EnsureInitialized(); return context_; }
+  npu_stream_t *stream() { EnsureInitialized(); return stream_; }
+  bool supports_four_core() { EnsureInitialized(); return four_core_; }
+  uint64_t uram_capacity() { EnsureInitialized(); return uram_capacity_; }
 
 private:
+  // Graph assignment / all-CPU fallback must not open a device connection.
+  // Failed initialization may be retried; call_once publishes only success.
+  void EnsureInitialized();
+  void Initialize();
+  std::once_flag initialized_;
   npu_runtime_t *runtime_ = nullptr;
   npu_context_t *context_ = nullptr;
   npu_stream_t *stream_ = nullptr;
+  bool four_core_ = false;
+  uint64_t uram_capacity_ = 0;
 };
 
 class DeviceContext final {
 public:
-  // Fixed Conv execution: four cores, double buffering, no runtime tuning.
-  static constexpr uint32_t kConvTileH = 8, kConvTileW = 8;
-  static constexpr uint32_t kConvTileCi = 32, kConvTileCo = 16;
+  // Four-core Conv; the operator plans double-buffered tiles within 1.5 MiB.
   // Shared by EP assignment and execution; this checks capacity, not planning.
   static void ValidateConvResources(const ConvShape &);
   explicit DeviceContext(std::string kernel_elf = {},

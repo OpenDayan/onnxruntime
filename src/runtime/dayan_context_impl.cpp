@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if defined(RVNPU_CONV_PROFILE)
+#include <atomic>
+#endif
 
 #include "runtime/device_buffer.h"
 #include "runtime/cpu_reference.h"
@@ -21,6 +24,15 @@ void RequireSuccess(int status, const std::string &stage) {
   if (status != 0)
     throw std::runtime_error(stage + " failed: runtime code=" +
                              std::to_string(status));
+}
+
+void ConfigureLargeTransfer(npu_kernel_launch_attrs_t &attrs,
+                            bool four_core_available, size_t elements) {
+  constexpr size_t kFourCoreThreshold = 8192;
+  if (four_core_available && elements >= kFourCoreThreshold) {
+    attrs.config.task_dim = NPUTaskDim3{4U, 1U, 1U};
+    attrs.config.task_mode = NPUTaskMode::kFourCore;
+  }
 }
 
 // MAT 只支持 BF16，且要求 K 是 32 的倍数、N 是 16 的倍数：host 侧把操作数转成
@@ -80,7 +92,19 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
   const bool same = shape.lhs_elements == shape.output_elements &&
                     shape.rhs_elements == shape.output_elements;
   const size_t bytes = shape.output_elements * 4;
-  DAYAN_ATTRS("ort-binary");
+  // Optional task labels make full-network dyperf aggregation unambiguous.
+  // Default names stay unchanged for existing trace regression tools.
+  const bool named_profile = std::getenv("RVNPU_PROFILE_OPERATOR_NAMES") != nullptr;
+  const char *binary_task = code == 0 ? "ort-Add" : code == 1 ? "ort-Mul"
+      : code == 2 ? "ort-Sub" : "ort-Div";
+  DAYAN_ATTRS(named_profile ? binary_task : "ort-binary");
+  // The contiguous Add/Mul path is task-partitionable. Use all four cores
+  // once the transfer size is large enough to amortize the extra launch
+  // synchronization; the broadcast fallback remains single-core.
+  if (same && runtime_.supports_four_core() && shape.output_elements >= 8192) {
+    attrs.config.task_dim = NPUTaskDim3{4U, 1U, 1U};
+    attrs.config.task_mode = NPUTaskMode::kFourCore;
+  }
   int status = 0;
   if (same) {
     // 逐元素内核按 1024 个元素一批处理，两侧输入和输出都补零到这个粒度。
@@ -102,20 +126,38 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
     if (status == 0)
       CopyFromDevice(out, c.Get(), bytes);
   } else {
-    // 广播：a 侧按输出形状（连续 NCHW），b 侧保持原始形状，由内核按下标取值。
-    const float *a_source = shape.swap_inputs ? rhs : lhs;
-    const float *b_source = shape.swap_inputs ? lhs : rhs;
+    // 广播：两侧都保留原始 shape，由设备 kernel 对每一侧分别做
+    // stride-0 广播。这样既保留原来单边广播的快速路径，也覆盖
+    // [1,8400,1] * [1,1,4] 这类两个输入都小于输出的后处理形状。
+    const bool commutative_swap = shape.swap_inputs && code <= 1;
+    const size_t a_elements =
+        commutative_swap ? shape.rhs_elements : shape.lhs_elements;
     const size_t b_elements =
-        shape.swap_inputs ? shape.lhs_elements : shape.rhs_elements;
-    DayanDeviceBuffer a(runtime_, bytes), b(runtime_, b_elements * 4),
-        c(runtime_, bytes);
-    CopyToDevice(a.Get(), a_source, bytes);
-    CopyToDevice(b.Get(), b_source, b_elements * 4);
-    const auto &ad = shape.output_dims;
-    const auto &bd = shape.broadcast_dims;
-    status = rvnpu_binary_broadcast_fp32(a.Get(), b.Get(), c.Get(), ad[0], ad[1],
-                                         ad[2], ad[3], bd[0], bd[1], bd[2],
-                                         bd[3], code, &attrs);
+        commutative_swap ? shape.lhs_elements : shape.rhs_elements;
+    DayanDeviceBuffer a(runtime_, a_elements * 4),
+        b(runtime_, b_elements * 4), c(runtime_, bytes);
+    CopyToDevice(a.Get(), commutative_swap ? rhs : lhs, a_elements * 4);
+    CopyToDevice(b.Get(), commutative_swap ? lhs : rhs, b_elements * 4);
+    const auto &ld = commutative_swap ? shape.output_dims : shape.lhs_dims;
+    const auto &rd = commutative_swap ? shape.lhs_dims : shape.rhs_dims;
+    uint64_t contiguous = 1;
+    for (size_t dimension = 0; dimension < ld.size(); ++dimension) {
+      if (ld[dimension] != rd[dimension])
+        break;
+      contiguous *= ld[dimension];
+    }
+    // The device broadcast kernel enters its task-partitionable contiguous
+    // path only when the non-broadcast input covers the output shape and the
+    // common inner span is request-aligned. Match that predicate here so the
+    // host does not enable four-core mode for the scalar fallback.
+    if (code <= 1 && ld == shape.output_dims && contiguous >= 16 &&
+        contiguous % 16 == 0) {
+      ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                             shape.output_elements);
+    }
+    status = rvnpu_binary_broadcast_fp32(
+        a.Get(), b.Get(), c.Get(), ld[0], ld[1], ld[2], ld[3], rd[0], rd[1],
+        rd[2], rd[3], code, &attrs);
     if (status == 0)
       CopyFromDevice(out, c.Get(), bytes);
   }
@@ -155,7 +197,12 @@ void DeviceContext::RunUnary(const float *x, float *y,
   size_t b = padded * 4, ob = s.elements * 4;
   DayanDeviceBuffer i(runtime_, b), o(runtime_, b);
   CopyToDevice(i.Get(), x, b);
-  DAYAN_ATTRS("ort-unary");
+  const bool named_profile = std::getenv("RVNPU_PROFILE_OPERATOR_NAMES") != nullptr;
+  DAYAN_ATTRS(named_profile ? (silu ? "ort-Silu" : "ort-Sigmoid") : "ort-unary");
+  if (padded >= 8192U && runtime_.supports_four_core()) {
+    attrs.config.task_dim = NPUTaskDim3{4U, 1, 1};
+    attrs.config.task_mode = NPUTaskMode::kFourCore;
+  }
   int st = silu ? rvnpu_silu_f32(i.Get(), o.Get(), 1U, 1U, 1U, uint32_t(padded),
                                  &attrs)
                 : rvnpu_sigmoid_f32(i.Get(), o.Get(), 1U, 1U, 1U,
@@ -185,7 +232,9 @@ void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
   std::lock_guard lock(mutex_);
   size_t outb = s.output_elements * 4;
   DayanDeviceBuffer out(runtime_, outb);
-  CopyToDevice(out.Get(), output, outb);
+  // Concat kernels cover every output slice.  The host output is therefore
+  // not an input to the operation; copying it to the device only adds a
+  // full-size U2D transfer before the first slice is written.
   DAYAN_ATTRS("ort-concat");
   int32_t axis_offset = 0;
   for (size_t i = 0; i < inputs.size(); ++i) {
@@ -198,6 +247,9 @@ void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
       throw std::invalid_argument("Concat input");
     DayanDeviceBuffer in(runtime_, b);
     CopyToDevice(in.Get(), inputs[i], b);
+    ConfigureLargeTransfer(
+        attrs, runtime_.supports_four_core(),
+        size_t(s.outer) * s.input_axes[i] * s.inner);
     RequireSuccess(rvnpu_concat_fp32(in.Get(), out.Get(), s.outer,
                                      s.input_axes[i], s.output_axis, s.inner,
                                      uint32_t(axis_offset), &attrs),
@@ -227,6 +279,9 @@ void DeviceContext::RunSplit(const float *input,
       throw std::invalid_argument("Split output");
     DayanDeviceBuffer out(runtime_, ob);
     DAYAN_ATTRS("ort-split");
+    ConfigureLargeTransfer(
+        attrs, runtime_.supports_four_core(),
+        size_t(s.outer) * s.output_axes[i] * s.inner);
     RequireSuccess(rvnpu_split_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
                                     s.output_axes[i], s.inner,
                                     uint32_t(axis_offset), &attrs),
@@ -247,6 +302,8 @@ void DeviceContext::RunSlice(const float *input, float *output,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), input, ib);
   DAYAN_ATTRS("ort-slice");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                         s.output_elements);
   RequireSuccess(rvnpu_slice_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
                                   s.start, s.length, s.step, s.inner, &attrs),
                  "Slice");
@@ -264,6 +321,8 @@ void DeviceContext::RunSlice(const int64_t *input, int64_t *output,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), input, ib);
   DAYAN_ATTRS("ort-slice-i64");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                         s.output_elements);
   RequireSuccess(rvnpu_slice_int64(in.Get(), out.Get(), s.outer, s.input_axis,
                                    s.start, s.length, s.step, s.inner, &attrs),
                  "Slice int64");
@@ -279,6 +338,8 @@ void DeviceContext::RunResize(const float *input, float *output,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), input, ib);
   DAYAN_ATTRS("ort-resize");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                         s.output_elements);
   RequireSuccess(rvnpu_resize_nearest_nchw_fp32(
                      in.Get(), out.Get(), s.batch, s.channels, s.input_h,
                      s.input_w, s.output_h, s.output_w, &attrs),
@@ -295,6 +356,7 @@ void DeviceContext::RunTranspose(const float *input, float *output,
   DayanDeviceBuffer in(runtime_, b), out(runtime_, b);
   CopyToDevice(in.Get(), input, b);
   DAYAN_ATTRS("ort-transpose");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   int mode = s.rank == 2 ? 0 : s.rank == 3 ? 1 : 2;
   RequireSuccess(rvnpu_transpose_fp32(in.Get(), out.Get(), s.dims[0], s.dims[1],
                                       s.dims[2], s.dims[3], mode, &attrs),
@@ -315,6 +377,7 @@ void DeviceContext::RunTranspose(const int64_t *input, int64_t *output,
   DayanDeviceBuffer in(runtime_, b), out(runtime_, b);
   CopyToDevice(in.Get(), input, b);
   DAYAN_ATTRS("ort-trans-i64");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   RequireSuccess(rvnpu_transpose_10_int64(in.Get(), out.Get(), s.dims[0],
                                           s.dims[1], &attrs),
                  "Transpose int64");
@@ -330,6 +393,10 @@ void DeviceContext::RunSoftmax(const float *x, float *y,
   DayanDeviceBuffer i(runtime_, b), o(runtime_, b);
   CopyToDevice(i.Get(), x, b);
   DAYAN_ATTRS("ort-softmax");
+  // Softmax shards independent outer/chunk units across the X task
+  // dimension. Keep tiny rows single-core, but use all available cores for
+  // the YOLO-sized DFL tensor so the SFU/reduction work is not serialized.
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   RequireSuccess(
       rvnpu_softmax_axis1_fp32(i.Get(), o.Get(), s.outer, s.axis, s.inner, &attrs),
       "Softmax");
@@ -345,6 +412,8 @@ void DeviceContext::RunReduceMax(const float *x, float *y,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-reduce");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                         static_cast<size_t>(s.rows) * s.columns);
   RequireSuccess(rvnpu_reduce_max_lastdim_fp32(in.Get(), out.Get(), s.rows,
                                                s.columns, &attrs),
                  "ReduceMax");
@@ -360,6 +429,8 @@ void DeviceContext::RunArgMax(const float *x, int64_t *y,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-argmax");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
+                         static_cast<size_t>(s.rows) * s.columns);
   RequireSuccess(
       rvnpu_argmax_lastdim_fp32(in.Get(), out.Get(), s.rows, s.columns, 0, &attrs),
       "ArgMax");
@@ -375,6 +446,10 @@ void DeviceContext::RunMaxPool(const float *x, float *y,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-maxpool");
+  // MaxPool currently shards planes through the kernel's local URAM staging.
+  // Keep the EP path single-core until the four-core 5x5 YOLO shape has a
+  // clean RTL result; the previous unvalidated four-core launch produced
+  // AXIM64 RLAST errors during the full network run.
   RequireSuccess(rvnpu_maxpool2d_nchw_fp32(
                      in.Get(), out.Get(), s.batch, s.channels, s.input_h,
                      s.input_w, s.output_h, s.output_w, s.kernel_h, s.kernel_w,
@@ -393,6 +468,7 @@ void DeviceContext::RunTopK(const float *x, float *v, int64_t *i,
   DayanDeviceBuffer in(runtime_, ib), ov(runtime_, vb), oi(runtime_, ii);
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-topk");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
   RequireSuccess(rvnpu_topk_lastdim_fp32(in.Get(), ov.Get(), oi.Get(), s.rows,
                                          s.columns, s.k, &attrs),
                  "TopK");
@@ -413,6 +489,7 @@ void DeviceContext::RunGatherNd(const float *data, const int64_t *indices,
   CopyToDevice(d.Get(), data, db);
   CopyToDevice(in.Get(), indices, ib);
   DAYAN_ATTRS("ort-gather");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
   RequireSuccess(rvnpu_gather_nd_fp32(d.Get(), in.Get(), o.Get(), s.rows,
                                       s.index_depth, s.data_dims[0],
                                       s.data_dims[1], s.data_dims[2], &attrs),
@@ -433,6 +510,7 @@ void DeviceContext::RunGatherNd(const int64_t *data, const int64_t *indices,
   CopyToDevice(d.Get(), data, db);
   CopyToDevice(in.Get(), indices, ib);
   DAYAN_ATTRS("ort-gather-i64");
+  ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
   RequireSuccess(rvnpu_gather_nd_int64(d.Get(), in.Get(), o.Get(), s.rows,
                                        s.index_depth, s.data_dims[0],
                                        s.data_dims[1], s.data_dims[2], &attrs),
@@ -495,16 +573,28 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   DayanDeviceBuffer ai(runtime_, ab), bi(runtime_, btb), out(runtime_, ob);
   CopyToDevice(ai.Get(), a_bf16.data(), ab);
   CopyToDevice(bi.Get(), bt_bf16.data(), btb);
-  // GEMM 换用 demo 的 matmul_bf16_1c 原版内核：形状/步长打包成 config 走 DDR。
+  // GEMM 使用 demo 的 matmul_bf16_1c 内核族：按每-Core URAM 容量选择
+  // 1.5 MiB/768 KiB tile，并在具备四核拓扑时使用四核独立 tile launch。
   const MatmulBf16Config config{
       static_cast<uint64_t>(s.m), static_cast<uint64_t>(npad),
       static_cast<uint64_t>(kpad), kpad * 2, kpad * 2, npad * 4};
   DayanDeviceBuffer cfg(runtime_, sizeof(config));
   CopyToDevice(cfg.Get(), &config, sizeof(config));
   DAYAN_ATTRS("matmul-bf16-1c");
-  RequireSuccess(
-      matmul_bf16_1c(cfg.Get(), ai.Get(), bi.Get(), out.Get(), &attrs),
-      "MatMul");
+  constexpr uint64_t kSmallMatmulUram = 768U * 1024U;
+  constexpr uint64_t kLargeMatmulUram = 1536U * 1024U;
+  const uint64_t uram = runtime_.uram_capacity();
+  if (uram < kSmallMatmulUram)
+    throw std::runtime_error("MatMul requires at least 768 KiB URAM per Core");
+  const bool small_uram = uram < kLargeMatmulUram;
+  const bool four_core = runtime_.supports_four_core();
+  if (four_core) {
+    attrs.config.task_dim = NPUTaskDim3{4U, 1U, 1U};
+    attrs.config.task_mode = NPUTaskMode::kFourCore;
+  }
+  const auto launch = small_uram ? matmul_bf16_1c_small : matmul_bf16_1c;
+  RequireSuccess(launch(cfg.Get(), ai.Get(), bi.Get(), out.Get(), &attrs),
+                 "MatMul");
   // C 按 [m][npad] 落盘，只取回前 n 列。
   std::vector<float> padded(static_cast<size_t>(s.m) * npad);
   CopyFromDevice(padded.data(), out.Get(), ob);
@@ -550,17 +640,6 @@ void DeviceContext::ValidateConvResources(const ConvShape &s) {
       s.dilation_h > 3 || s.dilation_w > 3)
     throw std::invalid_argument(
         "Conv outside tested device candidate envelope");
-  const uint64_t ih = uint64_t(kConvTileH - 1) * s.stride_h +
-                      uint64_t(s.kernel_h - 1) * s.dilation_h + 1;
-  const uint64_t iw = uint64_t(kConvTileW - 1) * s.stride_w +
-                      uint64_t(s.kernel_w - 1) * s.dilation_w + 1;
-  auto align = [](uint64_t bytes) { return (bytes + 63) & ~uint64_t(63); };
-  const uint64_t uram_bytes = 2 *
-      (align(ih * iw * kConvTileCi * 2) +
-       align(uint64_t(s.kernel_h) * s.kernel_w * kConvTileCi * kConvTileCo * 2) +
-       align(uint64_t(kConvTileH) * kConvTileW * kConvTileCo * 4));
-  if (uram_bytes > 65536)
-    throw std::invalid_argument("Conv fixed tile exceeds 64 KiB URAM");
 }
 
 void DeviceContext::RunConv(const float *input, const float *weight,
@@ -641,7 +720,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
     CopyToDevice(weights.Get(), packed_weight.data(),
                  packed_weight.size() * sizeof(uint16_t));
 
-    const Conv2dTileConfig config{static_cast<uint32_t>(s.input_channels),
+    Conv2dTileConfig config{static_cast<uint32_t>(s.input_channels),
                                   static_cast<uint32_t>(s.output_channels),
                                   static_cast<uint32_t>(s.input_w),
                                   static_cast<uint32_t>(s.input_h),
@@ -662,14 +741,36 @@ void DeviceContext::RunConv(const float *input, const float *weight,
                                   static_cast<uint32_t>(weight_channel_stride),
                                   static_cast<uint32_t>(output_stride),
                                   static_cast<uint32_t>(output_row_stride),
-                                  kConvTileH,
-                                  kConvTileW,
-                                  kConvTileCi,
-                                  kConvTileCo,
+                                  0, 0, 0, 0,
         1U};
+    if (!conv2d_plan_tiles(&config))
+      throw std::invalid_argument("Conv cannot plan tiles within 1.5 MiB URAM");
+    const uint64_t tile_ih = (config.tile_h - 1ULL) * config.stride_h +
+                            (config.hk - 1ULL) * config.dilation_h + 1;
+    const uint64_t tile_iw = (config.tile_w - 1ULL) * config.stride_w +
+                            (config.wk - 1ULL) * config.dilation_w + 1;
+    auto aligned = [](uint64_t bytes) { return (bytes + 63) & ~uint64_t(63); };
+    const uint64_t tile_bytes = 2 *
+        (aligned(tile_ih * tile_iw * config.tile_ci * 2) +
+         aligned(uint64_t(config.hk) * config.wk * config.tile_ci * config.tile_co * 2) +
+         aligned(uint64_t(config.tile_h) * config.tile_w * config.tile_co * 4));
+    const uint32_t reserved_uram = 1536U * 1024U;
+    if (tile_bytes > reserved_uram)
+      throw std::invalid_argument("Conv tile exceeds reserved URAM");
+#if defined(RVNPU_CONV_PROFILE)
+    std::printf("CONV_PROFILE_CONFIG tile=%ux%u ci=%u co=%u "
+                "uram_used=%llu uram_reserved=%u\n",
+                config.tile_h, config.tile_w, config.tile_ci, config.tile_co,
+                (unsigned long long)tile_bytes, reserved_uram);
+#endif
     DayanDeviceBuffer config_buffer(runtime_, sizeof(config));
     CopyToDevice(config_buffer.Get(), &config, sizeof(config));
 
+#if defined(RVNPU_CONV_PROFILE)
+    Conv2dProfileRecord records[4]{};
+    DayanDeviceBuffer timing_buffer(runtime_, sizeof(records));
+    static std::atomic<uint64_t> next_call_id{0};
+#endif
     for (int32_t batch = 0; batch < shape.batch; ++batch) {
       input =
           all_input + (size_t(batch) * shape.group + group) * input_group_size;
@@ -684,13 +785,51 @@ void DeviceContext::RunConv(const float *input, const float *weight,
       npu_kernel_launch_attrs_t attrs{};
       npu_kernel_launch_attrs_init(&attrs, runtime_.context(),
                                    runtime_.stream(), "conv2d_tile_4c");
+      const auto launch_conv = conv2d_tile_4c;
       attrs.config.task_dim = NPUTaskDim3{4U, 1, 1};
       attrs.config.task_mode =
           NPUTaskMode::kFourCore;
       attrs.timeout_ms = kTimeout;
-      RequireSuccess(conv2d_tile_4c(config_buffer.Get(), in.Get(),
+#if defined(RVNPU_CONV_PROFILE)
+      // Cap this experimental launch wait; a timeout is not proof that the
+      // device has cancelled the kernel. The runner must not submit another
+      // call until the outstanding work is confirmed terminal.
+      attrs.timeout_ms = 45U * 60U * 1000U;
+      const uint64_t call_id = ++next_call_id;
+      std::memset(records, 0, sizeof(records));
+      CopyToDevice(timing_buffer.Get(), records, sizeof(records));
+      RequireSuccess(launch_conv(config_buffer.Get(), in.Get(),
+                                   weights.Get(), out.Get(), timing_buffer.Get(),
+                                   call_id, &attrs),
+                     "Conv tiled 4c profiling");
+      CopyFromDevice(records, timing_buffer.Get(), sizeof(records));
+      for (uint64_t task = 0; task < 4; ++task) {
+        const auto &r = records[task];
+        if (r.completed != 1 || r.call_id != call_id || r.task != task ||
+            r.end <= r.start)
+          throw std::runtime_error("Conv kernel timing record incomplete");
+        std::printf("CONV_KERNEL_TIME call=%llu batch=%d group=%d task=%llu "
+                    "hart=%llu start=%llu end=%llu cycles=%llu completed=1\n",
+                    (unsigned long long)call_id, batch, group,
+                    (unsigned long long)task, (unsigned long long)r.hart,
+                    (unsigned long long)r.start, (unsigned long long)r.end,
+                    (unsigned long long)(r.end - r.start));
+        static const char *phase_names[16] = {
+            "setup", "input_cache", "weight_cache", "output_cache", "clear",
+            "input_issue", "weight_load", "mat_config", "mat_wait", "output_store",
+            "output_flush", "lsu_wait", "body", "tiles", "mat_calls", "weight_hits"};
+        std::printf("CONV_PHASE_TIME call=%llu task=%llu",
+                    (unsigned long long)call_id, (unsigned long long)task);
+        for (unsigned phase = 0; phase < 16; ++phase)
+          std::printf(" %s=%llu", phase_names[phase],
+                      (unsigned long long)r.phase[phase]);
+        std::printf("\n");
+      }
+#else
+      RequireSuccess(launch_conv(config_buffer.Get(), in.Get(),
                                    weights.Get(), out.Get(), &attrs),
                      "Conv tiled 4c");
+#endif
       CopyFromDevice(packed_output.data(), out.Get(),
                      packed_output.size() * sizeof(float));
 

@@ -161,8 +161,9 @@ const char *ORT_API_CALL RvnpuEp::GetNameImpl(const OrtEp *ep) noexcept {
 }
 
 bool RvnpuEp::IsOperatorEnabled(const std::string &operator_type) const {
-  return config_.enabled_ops.empty() ||
-         config_.enabled_ops.count(operator_type) != 0;
+  return config_.disabled_ops.count(operator_type) == 0 &&
+         (config_.enabled_ops.empty() ||
+          config_.enabled_ops.count(operator_type) != 0);
 }
 
 bool RvnpuEp::SupportsMatMul(const Ort::ConstNode &node) {
@@ -398,6 +399,13 @@ bool RvnpuEp::SupportsTranspose(const Ort::ConstNode &node) {
                              [](int64_t dimension) { return dimension < 0; })) {
       return true;
     }
+    if (rank3 &&
+        !(((*input_shape)[1] > 0 && (*input_shape)[1] <= 128 &&
+           (*input_shape)[2] > 0 && (*input_shape)[2] % 16 == 0) ||
+          ((*input_shape)[0] > 0 && (*input_shape)[1] > 0 &&
+           (*input_shape)[2] == 1 && (*input_shape)[0] <= 4 &&
+           (*input_shape)[1] <= 16384)))
+      return false;
     if (std::all_of(input_shape->begin(), input_shape->end(),
                     [](int64_t dimension) { return dimension >= 0; }))
       static_cast<void>(ValidateTransposeShape(*input_shape, perm));
@@ -737,6 +745,11 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
     for (const auto &node : nodes) {
       const auto sigmoid = MatchSiluPattern(node);
       if (!sigmoid)
+        continue;
+      // A node explicitly excluded from this EP must not be claimed through
+      // fusion either. Keep the existing enabled_ops=Silu shorthand intact.
+      if (ep.config_.disabled_ops.count("Sigmoid") ||
+          ep.config_.disabled_ops.count("Mul"))
         continue;
       std::array<Ort::ConstNode, 2> fusion_nodes{*sigmoid, node};
       OrtNodeFusionOptions fusion_options{};
