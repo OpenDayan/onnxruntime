@@ -8,11 +8,11 @@
 #include "plugin/plugin_utils.h"
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
-class RvnpuEpFactory;
+class DayanEpFactory;
 
-class RvnpuEp final : public OrtEp {
+class DayanEp final : public OrtEp {
 public:
   struct Config {
     std::string kernel_elf;
@@ -22,8 +22,8 @@ public:
     uint32_t device_id{};
   };
 
-  RvnpuEp(RvnpuEpFactory &factory, Config config, const OrtLogger &logger);
-  ~RvnpuEp();
+  DayanEp(DayanEpFactory &factory, Config config, const OrtLogger &logger);
+  ~DayanEp();
 
 private:
   static const char *ORT_API_CALL GetNameImpl(const OrtEp *) noexcept;
@@ -58,7 +58,7 @@ private:
   MatchSiluPattern(const Ort::ConstNode &mul);
   bool IsOperatorEnabled(const std::string &operator_type) const;
 
-  RvnpuEpFactory &factory_;
+  DayanEpFactory &factory_;
   const OrtApi &api_;
   const OrtEpApi &ep_api_;
   const std::string name_;
@@ -68,4 +68,4 @@ private:
   OrtKernelRegistry *kernel_registry_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

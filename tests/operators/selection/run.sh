@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
-ELF="${RVNPU_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
+ELF="${DAYAN_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
 [[ -e "${ELF}" ]] || : > "${ELF}"
-RUNNER="${BUILD_DIR}/test_rvnpu_onnx_model"
-PLUGIN="${BUILD_DIR}/librvnpu_ep.so"
+RUNNER="${BUILD_DIR}/test_dayan_onnx_model"
+PLUGIN="${BUILD_DIR}/libdayan_ep.so"
 DATA="${ROOT_DIR}/build/operators/selection"
 
 run_case() {
@@ -15,7 +15,7 @@ run_case() {
   echo "[${operator}] ONNX Runtime 分配与数值测试"
   "${RUNNER}" --model "${DATA}/${directory}/model.onnx" \
     --plugin "${PLUGIN}" --kernel-elf "${ELF}" \
-    --data-dir "${DATA}/${directory}" --expect-rvnpu "${operator}"
+    --data-dir "${DATA}/${directory}" --expect-dayan "${operator}"
 }
 
 run_case argmax ArgMax
@@ -29,5 +29,5 @@ echo "[empty postprocess] 动态空张量链路测试"
 "${RUNNER}" --model "${DATA}/empty_postprocess/model.onnx" \
   --plugin "${PLUGIN}" --kernel-elf "${ELF}" \
   --data-dir "${DATA}/empty_postprocess" \
-  --expect-rvnpu-counts \
+  --expect-dayan-counts \
   Transpose=1,GatherND=1,Div=1,Concat=1,Slice=1,NonMaxSuppression=1

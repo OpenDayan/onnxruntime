@@ -2,7 +2,7 @@
 
 #include "plugin/plugin_utils.h"
 
-namespace rvnpu {
+namespace dayan {
 
 struct KernelCreateInfo {
   Ort::KernelDef definition{nullptr};
@@ -24,17 +24,17 @@ OrtStatus *BuildKernelCreateInfo(const char *, void *, KernelCreateInfo *);
 
 static constexpr const char *kOnnxDomain = "";
 
-#define RVNPU_KERNEL_CLASS_NAME(domain, start_version, end_version, name)      \
-  rvnpu_##name##_##domain##_v##start_version##_##end_version
+#define DAYAN_KERNEL_CLASS_NAME(domain, start_version, end_version, name)      \
+  dayan_##name##_##domain##_v##start_version##_##end_version
 
-#define RVNPU_DEFINE_VERSIONED_KERNEL(name, domain, start_version,             \
+#define DAYAN_DEFINE_VERSIONED_KERNEL(name, domain, start_version,             \
                                       end_version, builder, kernel_class)      \
-  class RVNPU_KERNEL_CLASS_NAME(domain, start_version, end_version, name);     \
+  class DAYAN_KERNEL_CLASS_NAME(domain, start_version, end_version, name);     \
   template <>                                                                  \
-  OrtStatus *BuildKernelCreateInfo<RVNPU_KERNEL_CLASS_NAME(                    \
+  OrtStatus *BuildKernelCreateInfo<DAYAN_KERNEL_CLASS_NAME(                    \
       domain, start_version, end_version, name)>(                              \
       const char *ep_name, void *kernel_state, KernelCreateInfo *result) {     \
-    RVNPU_EXCEPTION_GUARD_BEGIN                                                \
+    DAYAN_EXCEPTION_GUARD_BEGIN                                                \
     auto definition = builder.SetOperatorType(#name)                           \
                           .SetDomain(domain)                                   \
                           .SetSinceVersion(start_version, end_version)         \
@@ -53,11 +53,11 @@ static constexpr const char *kOnnxDomain = "";
     result->create = create;                                                   \
     result->state = kernel_state;                                              \
     return nullptr;                                                            \
-    RVNPU_EXCEPTION_GUARD_END                                                  \
+    DAYAN_EXCEPTION_GUARD_END                                                  \
   }
 
-#define RVNPU_DEFINE_KERNEL(name, domain, version, builder, kernel_class)      \
-  RVNPU_DEFINE_VERSIONED_KERNEL(name, domain, version, version, builder,       \
+#define DAYAN_DEFINE_KERNEL(name, domain, version, builder, kernel_class)      \
+  DAYAN_DEFINE_VERSIONED_KERNEL(name, domain, version, version, builder,       \
                                 kernel_class)
 
-} // namespace rvnpu
+} // namespace dayan

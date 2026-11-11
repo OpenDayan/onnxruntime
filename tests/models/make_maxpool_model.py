@@ -27,7 +27,7 @@ def save_case(
         "output", TensorProto.FLOAT, [None, None, None, None]
     )
     graph = helper.make_graph(
-        [node], "rvnpu_maxpool_test", [graph_input], [graph_output], initializers
+        [node], "dayan_maxpool_test", [graph_input], [graph_output], initializers
     )
     model = helper.make_model(
         graph,
@@ -49,7 +49,7 @@ def make_maxpool_cases(output_dir: Path) -> None:
         "MaxPool",
         ["input"],
         ["output"],
-        name="rvnpu_test_maxpool",
+        name="dayan_test_maxpool",
         ceil_mode=0,
         dilations=[1, 1],
         kernel_shape=[5, 5],

@@ -5,7 +5,7 @@
 
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
 DayanDeviceBuffer::DayanDeviceBuffer(DayanRuntime &runtime, size_t bytes,
                                      size_t alignment)
@@ -31,4 +31,4 @@ DayanDeviceBuffer::~DayanDeviceBuffer() {
     static_cast<void>(npu_buffer_destroy(buffer_));
 }
 
-} // namespace rvnpu
+} // namespace dayan

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PYTHON="${PYTHON_EXECUTABLE:-python3}"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"
 MODEL="${MODEL_DIR}/yolov8n.onnx"
-IMAGE="${RVNPU_YOLO_IMAGE:-${ROOT_DIR}/tests/assets/bus.jpg}"
+IMAGE="${DAYAN_YOLO_IMAGE:-${ROOT_DIR}/tests/assets/bus.jpg}"
 
 mkdir -p "${MODEL_DIR}"
 if [[ ! -f "${MODEL}" ]]; then

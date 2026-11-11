@@ -3,7 +3,7 @@
 #include <cstring>
 #include <memory>
 
-namespace rvnpu {
+namespace dayan {
 
 HostStagingAllocator::HostStagingAllocator(const OrtMemoryInfo *memory_info)
     : OrtAllocator{}, memory_info_(memory_info) {
@@ -69,30 +69,30 @@ bool ORT_API_CALL HostStagingDataTransfer::CanCopyImpl(
 OrtStatus *ORT_API_CALL HostStagingDataTransfer::CopyTensorsImpl(
     OrtDataTransferImpl *transfer, const OrtValue **sources,
     OrtValue **destinations, OrtSyncStream **, size_t count) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<HostStagingDataTransfer *>(transfer);
   for (size_t index = 0; index < count; ++index) {
     const void *source = nullptr;
     void *destination = nullptr;
     size_t bytes = 0;
-    RVNPU_RETURN_IF_ERROR(self.api_.GetTensorData(sources[index], &source));
-    RVNPU_RETURN_IF_ERROR(
+    DAYAN_RETURN_IF_ERROR(self.api_.GetTensorData(sources[index], &source));
+    DAYAN_RETURN_IF_ERROR(
         self.api_.GetTensorMutableData(destinations[index], &destination));
-    RVNPU_RETURN_IF_ERROR(
+    DAYAN_RETURN_IF_ERROR(
         self.api_.GetTensorSizeInBytes(sources[index], &bytes));
     size_t destination_bytes = 0;
-    RVNPU_RETURN_IF_ERROR(self.api_.GetTensorSizeInBytes(destinations[index],
+    DAYAN_RETURN_IF_ERROR(self.api_.GetTensorSizeInBytes(destinations[index],
                                                          &destination_bytes));
     if (bytes != destination_bytes) {
       return self.api_.CreateStatus(ORT_INVALID_ARGUMENT,
-                                    "RVNPU staging copy tensor sizes differ");
+                                    "Dayan staging copy tensor sizes differ");
     }
     if (source != destination && bytes != 0) {
       std::memcpy(destination, source, bytes);
     }
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL
@@ -100,4 +100,4 @@ HostStagingDataTransfer::ReleaseImpl(OrtDataTransferImpl *) noexcept {
   // The factory owns the shared transfer object.
 }
 
-} // namespace rvnpu
+} // namespace dayan

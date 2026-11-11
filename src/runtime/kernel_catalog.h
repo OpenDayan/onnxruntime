@@ -1,6 +1,6 @@
 #pragma once
 
-namespace rvnpu::kernels {
+namespace dayan::kernels {
 
 inline constexpr const char *kTxInit = "__tx_init";
 inline constexpr const char *kMatMulFp32 = "triton_matmul_fp32_kernel";
@@ -33,4 +33,4 @@ inline constexpr const char *kNonMaxSuppressionFp32 =
 inline constexpr const char *kGatherNdFp32 = "gather_nd_fp32";
 inline constexpr const char *kGatherNdInt64 = "gather_nd_int64";
 
-} // namespace rvnpu::kernels
+} // namespace dayan::kernels

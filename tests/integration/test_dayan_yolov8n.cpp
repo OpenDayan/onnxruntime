@@ -17,8 +17,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 struct Options {
   std::string model;
@@ -64,14 +64,14 @@ Options Parse(int argc, char **argv) {
     throw std::invalid_argument("CPU-only and assignment-only are exclusive");
   if (!result.cpu_only && (result.plugin.empty() || result.kernel_elf.empty()))
     throw std::invalid_argument(
-        "--plugin and  for RVNPU execution");
-  const char *cpu_reference = std::getenv("RVNPU_CONV_REFERENCE");
+        "--plugin and  for Dayan execution");
+  const char *cpu_reference = std::getenv("DAYAN_CONV_REFERENCE");
   if (cpu_reference != nullptr && std::string(cpu_reference) != "")
     result.cpu_conv_reference = cpu_reference;
   if (result.cpu_conv_reference != "fp32" &&
       result.cpu_conv_reference != "bf16") {
     throw std::invalid_argument(
-        "RVNPU_CONV_REFERENCE must be fp32 or bf16");
+        "DAYAN_CONV_REFERENCE must be fp32 or bf16");
   }
   return result;
 }
@@ -121,8 +121,8 @@ std::vector<T> KernelAttributeArray(const OrtKernelInfo *info,
   }
 }
 
-rvnpu::ConvAttributes ReadBf16ConvAttributes(const OrtKernelInfo *info) {
-  rvnpu::ConvAttributes result;
+dayan::ConvAttributes ReadBf16ConvAttributes(const OrtKernelInfo *info) {
+  dayan::ConvAttributes result;
   result.dilations =
       KernelAttributeArray<int64_t>(info, "dilations", {1, 1});
   result.kernel_shape =
@@ -152,7 +152,7 @@ class Bf16ConvKernel {
     std::vector<int64_t> bias_shape;
     if (bias != nullptr)
       bias_shape = bias.GetTensorTypeAndShapeInfo().GetShape();
-    const auto shape = rvnpu::ValidateConvShapes(
+    const auto shape = dayan::ValidateConvShapes(
         input_shape, weight_shape,
         bias == nullptr ? nullptr : &bias_shape, attributes_);
     const float *input_data = input.GetTensorData<float>();
@@ -167,7 +167,7 @@ class Bf16ConvKernel {
     if (bias_data != nullptr)
       bias_vector.assign(bias_data, bias_data + shape.bias_elements);
     std::vector<float> output_vector(shape.output_elements);
-    rvnpu::ConvBf16Reference(
+    dayan::ConvBf16Reference(
         input_vector, weight_vector,
         bias_vector.empty() ? nullptr : &bias_vector, output_vector, shape);
     Ort::UnownedValue output =
@@ -177,7 +177,7 @@ class Bf16ConvKernel {
   }
 
  private:
-  rvnpu::ConvAttributes attributes_;
+  dayan::ConvAttributes attributes_;
 };
 
 class Bf16ConvOp
@@ -303,23 +303,23 @@ struct Comparison {
 };
 
 Comparison Compare(const std::vector<Detection> &cpu,
-                   const std::vector<Detection> &rvnpu) {
-  std::vector<bool> used(rvnpu.size(), false);
+                   const std::vector<Detection> &dayan) {
+  std::vector<bool> used(dayan.size(), false);
   Comparison result;
   float iou_sum = 0.0f;
   for (const auto &expected : cpu) {
     float best_iou = -1.0f;
-    size_t best_index = rvnpu.size();
-    for (size_t index = 0; index < rvnpu.size(); ++index) {
-      if (used[index] || rvnpu[index].class_id != expected.class_id)
+    size_t best_index = dayan.size();
+    for (size_t index = 0; index < dayan.size(); ++index) {
+      if (used[index] || dayan[index].class_id != expected.class_id)
         continue;
-      const float iou = IoU(expected, rvnpu[index]);
+      const float iou = IoU(expected, dayan[index]);
       if (iou > best_iou) {
         best_iou = iou;
         best_index = index;
       }
     }
-    if (best_index == rvnpu.size() || best_iou < 0.5f)
+    if (best_index == dayan.size() || best_iou < 0.5f)
       continue;
     used[best_index] = true;
     ++result.matched;
@@ -327,7 +327,7 @@ Comparison Compare(const std::vector<Detection> &cpu,
     result.min_iou = std::min(result.min_iou, best_iou);
     result.max_score_diff =
         std::max(result.max_score_diff,
-                 std::abs(expected.score - rvnpu[best_index].score));
+                 std::abs(expected.score - dayan[best_index].score));
   }
   if (result.matched != 0)
     result.mean_iou = iou_sum / static_cast<float>(result.matched);
@@ -352,7 +352,7 @@ void WriteDetections(std::ostream &stream,
 
 void WriteJson(const std::filesystem::path &path,
                const std::vector<Detection> &cpu,
-               const std::optional<std::vector<Detection>> &rvnpu) {
+               const std::optional<std::vector<Detection>> &dayan) {
   if (path.empty())
     return;
   if (!path.parent_path().empty())
@@ -363,9 +363,9 @@ void WriteJson(const std::filesystem::path &path,
   stream << std::setprecision(9)
          << "{\n  \"box_format\": \"xyxy\",\n  \"cpu\": ";
   WriteDetections(stream, cpu);
-  if (rvnpu) {
-    stream << ",\n  \"rvnpu\": ";
-    WriteDetections(stream, *rvnpu);
+  if (dayan) {
+    stream << ",\n  \"dayan\": ";
+    WriteDetections(stream, *dayan);
   }
   stream << "\n}\n";
 }
@@ -373,11 +373,11 @@ void WriteJson(const std::filesystem::path &path,
 size_t CheckAssignment(const Ort::Session &session) {
   std::unordered_map<std::string, size_t> counts;
   size_t silu_fusions = 0;
-  size_t rvnpu_execution_units = 0;
+  size_t dayan_execution_units = 0;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     if (std::string(subgraph.GetEpName()) != kEpName)
       continue;
-    ++rvnpu_execution_units;
+    ++dayan_execution_units;
     const auto nodes = subgraph.GetNodes();
     bool has_sigmoid = false;
     bool has_mul = false;
@@ -391,7 +391,7 @@ size_t CheckAssignment(const Ort::Session &session) {
   }
   if (counts["Conv"] != 64) {
     throw std::runtime_error(
-        "official YOLOv8n must assign 64 Conv nodes to RVNPU");
+        "official YOLOv8n must assign 64 Conv nodes to Dayan");
   }
   std::vector<std::pair<std::string, size_t>> sorted(counts.begin(), counts.end());
   std::sort(sorted.begin(), sorted.end());
@@ -402,7 +402,7 @@ size_t CheckAssignment(const Ort::Session &session) {
     std::cout << ' ' << name << '=' << count;
   }
   std::cout << " SiluFusion=" << silu_fusions
-            << " ExecutionUnits=" << rvnpu_execution_units << std::endl;
+            << " ExecutionUnits=" << dayan_execution_units << std::endl;
   return total;
 }
 
@@ -411,7 +411,7 @@ size_t CheckAssignment(const Ort::Session &session) {
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-yolov8n");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-yolov8n");
     if (options.assignment_only) {
       env.RegisterExecutionProviderLibrary(kRegistrationName, options.plugin);
       std::vector<Ort::ConstEpDevice> devices;
@@ -419,7 +419,7 @@ int main(int argc, char **argv) {
         if (std::string(device.EpName()) == kEpName)
           devices.push_back(device);
       if (devices.size() != 1)
-        throw std::runtime_error("expected exactly one RVNPU EP device");
+        throw std::runtime_error("expected exactly one Dayan EP device");
       Ort::SessionOptions session_options;
       session_options.SetGraphOptimizationLevel(
           GraphOptimizationLevel::ORT_DISABLE_ALL);
@@ -429,9 +429,9 @@ int main(int argc, char **argv) {
           {"kernel_elf", options.kernel_elf}};
       session_options.AppendExecutionProvider_V2(env, devices, ep_options);
       Ort::Session session(env, options.model.c_str(), session_options);
-      const size_t rvnpu_nodes = CheckAssignment(session);
+      const size_t dayan_nodes = CheckAssignment(session);
       env.UnregisterExecutionProviderLibrary(kRegistrationName);
-      std::cout << "rvnpu_nodes=" << rvnpu_nodes << std::endl;
+      std::cout << "dayan_nodes=" << dayan_nodes << std::endl;
       std::cout << "PASS" << std::endl;
       return 0;
     }
@@ -459,15 +459,15 @@ int main(int argc, char **argv) {
     }
 
     env.RegisterExecutionProviderLibrary(kRegistrationName, options.plugin);
-    std::vector<Detection> rvnpu;
-    size_t rvnpu_nodes = 0;
+    std::vector<Detection> dayan;
+    size_t dayan_nodes = 0;
     {
       std::vector<Ort::ConstEpDevice> devices;
       for (const auto &device : env.GetEpDevices())
         if (std::string(device.EpName()) == kEpName)
           devices.push_back(device);
       if (devices.size() != 1)
-        throw std::runtime_error("expected exactly one RVNPU EP device");
+        throw std::runtime_error("expected exactly one Dayan EP device");
       Ort::SessionOptions options_with_ep;
       options_with_ep.SetGraphOptimizationLevel(
           GraphOptimizationLevel::ORT_DISABLE_ALL);
@@ -477,24 +477,24 @@ int main(int argc, char **argv) {
           {"kernel_elf", options.kernel_elf}};
       options_with_ep.AppendExecutionProvider_V2(env, devices, ep_options);
       Ort::Session session(env, options.model.c_str(), options_with_ep);
-      rvnpu_nodes = CheckAssignment(session);
-      rvnpu = Run(session, input);
+      dayan_nodes = CheckAssignment(session);
+      dayan = Run(session, input);
     }
     env.UnregisterExecutionProviderLibrary(kRegistrationName);
 
-    const Comparison comparison = Compare(cpu, rvnpu);
-    WriteJson(options.results_json, cpu, rvnpu);
+    const Comparison comparison = Compare(cpu, dayan);
+    WriteJson(options.results_json, cpu, dayan);
     std::cout << "cpu_detections=" << cpu.size()
-              << " rvnpu_detections=" << rvnpu.size()
+              << " dayan_detections=" << dayan.size()
               << " matched=" << comparison.matched
               << " mean_iou=" << comparison.mean_iou
               << " min_iou=" << comparison.min_iou
               << " max_score_abs_diff=" << comparison.max_score_diff
-              << " rvnpu_nodes=" << rvnpu_nodes << std::endl;
+              << " dayan_nodes=" << dayan_nodes << std::endl;
     if (!options.smoke &&
-        (cpu.size() != rvnpu.size() || comparison.matched != cpu.size() ||
+        (cpu.size() != dayan.size() || comparison.matched != cpu.size() ||
          comparison.min_iou < 0.99f || comparison.max_score_diff > 1e-3f)) {
-      throw std::runtime_error("CPU/RVNPU official YOLOv8n outputs mismatch");
+      throw std::runtime_error("CPU/Dayan official YOLOv8n outputs mismatch");
     }
     std::cout << "PASS" << std::endl;
     return 0;

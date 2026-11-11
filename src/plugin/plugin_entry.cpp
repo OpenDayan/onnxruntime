@@ -5,14 +5,14 @@
 #include "plugin/ep_factory.h"
 
 #if defined(__GNUC__)
-#define RVNPU_EXPORT __attribute__((visibility("default")))
+#define DAYAN_EXPORT __attribute__((visibility("default")))
 #else
-#define RVNPU_EXPORT
+#define DAYAN_EXPORT
 #endif
 
 extern "C" {
 
-RVNPU_EXPORT OrtStatus *
+DAYAN_EXPORT OrtStatus *
 CreateEpFactories(const char *registration_name, const OrtApiBase *api_base,
                   const OrtLogger *default_logger, OrtEpFactory **factories,
                   size_t max_factories, size_t *num_factories) {
@@ -24,14 +24,14 @@ CreateEpFactories(const char *registration_name, const OrtApiBase *api_base,
   Ort::InitApi(api);
   if (max_factories < 1) {
     return api->CreateStatus(ORT_INVALID_ARGUMENT,
-                             "RVNPU Plugin EP requires one factory slot");
+                             "Dayan Plugin EP requires one factory slot");
   }
   const std::string name =
       registration_name == nullptr ? "" : registration_name;
   const bool allow_virtual =
       name.size() >= 8 && name.compare(name.size() - 8, 8, ".virtual") == 0;
   try {
-    factories[0] = new rvnpu::RvnpuEpFactory(*api, *api->GetEpApi(),
+    factories[0] = new dayan::DayanEpFactory(*api, *api->GetEpApi(),
                                              *default_logger, allow_virtual);
     *num_factories = 1;
     return nullptr;
@@ -40,8 +40,8 @@ CreateEpFactories(const char *registration_name, const OrtApiBase *api_base,
   }
 }
 
-RVNPU_EXPORT OrtStatus *ReleaseEpFactory(OrtEpFactory *factory) {
-  delete static_cast<rvnpu::RvnpuEpFactory *>(factory);
+DAYAN_EXPORT OrtStatus *ReleaseEpFactory(OrtEpFactory *factory) {
+  delete static_cast<dayan::DayanEpFactory *>(factory);
   return nullptr;
 }
 

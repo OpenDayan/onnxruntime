@@ -37,7 +37,7 @@ def build_model() -> onnx.ModelProto:
     ]
     graph = helper.make_graph(
         nodes,
-        "rvnpu_tiny_cnn",
+        "dayan_tiny_cnn",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 1, 10, 10])],
         [
             helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 32]),

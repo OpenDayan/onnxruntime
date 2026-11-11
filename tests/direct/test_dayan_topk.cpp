@@ -47,7 +47,7 @@ Options Parse(int argc, char **argv) {
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    const rvnpu::TopKShape shape = rvnpu::ValidateTopKShape(
+    const dayan::TopKShape shape = dayan::ValidateTopKShape(
         {options.rows, options.columns}, options.k, {});
     std::vector<float> input(shape.input_elements);
     for (size_t index = 0; index < input.size(); ++index) {
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
     }
     std::vector<float> values(shape.output_elements);
     std::vector<int64_t> indices(shape.output_elements);
-    rvnpu::DeviceContext context(options.kernel_elf);
+    dayan::DeviceContext context(options.kernel_elf);
     context.RunTopK(input.data(), values.data(), indices.data(), shape);
 
     for (int32_t row = 0; row < shape.rows; ++row) {

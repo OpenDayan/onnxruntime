@@ -184,8 +184,8 @@ void ReferenceConv(const std::vector<float> &input,
                    const std::vector<float> &weight,
                    const std::vector<float> *bias,
                    std::vector<float> &output,
-                   const rvnpu::ConvShape &shape) {
-  rvnpu::ConvReference(input, weight, bias, output, shape, false);
+                   const dayan::ConvShape &shape) {
+  dayan::ConvReference(input, weight, bias, output, shape, false);
 }
 
 } // namespace
@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
       if (options.pattern == "impulse" && !input.empty()) input[0] = 1;
     }
 
-    rvnpu::ConvAttributes attributes;
+    dayan::ConvAttributes attributes;
     attributes.kernel_shape = {options.weight_shape[2],
                                options.weight_shape[3]};
     attributes.strides = options.stride;
@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
     std::vector<int64_t> bias_shape;
     if (options.bias)
       bias_shape = {options.weight_shape[0]};
-    const auto shape = rvnpu::ValidateConvShapes(
+    const auto shape = dayan::ValidateConvShapes(
         options.input_shape, options.weight_shape,
         options.bias ? &bias_shape : nullptr, attributes);
     std::vector<float> weight(shape.weight_elements);
@@ -239,7 +239,7 @@ int main(int argc, char **argv) {
       if (options.bias) ReadData(options.data_dir + "/bias.bin", bias);
     }
     if (options.reference == "bf16") {
-      rvnpu::ConvBf16Reference(
+      dayan::ConvBf16Reference(
           input, weight, options.bias ? &bias : nullptr, reference, shape);
     } else {
       ReferenceConv(input, weight, options.bias ? &bias : nullptr, reference,
@@ -254,7 +254,7 @@ int main(int argc, char **argv) {
                 << " reference=" << options.reference << "\n";
       return 0;
     }
-    rvnpu::DeviceContext context(options.kernel_elf);
+    dayan::DeviceContext context(options.kernel_elf);
     const auto start = std::chrono::steady_clock::now();
     context.RunConv(input.data(), weight.data(),
                     options.bias ? bias.data() : nullptr, output.data(),

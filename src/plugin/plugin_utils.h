@@ -14,7 +14,7 @@
 #include "onnxruntime_cxx_api.h"
 #undef ORT_API_MANUAL_INIT
 
-#define RVNPU_RETURN_IF_ERROR(expr)                                            \
+#define DAYAN_RETURN_IF_ERROR(expr)                                            \
   do {                                                                         \
     Ort::Status status{(expr)};                                                \
     if (!status.IsOK()) {                                                      \
@@ -22,13 +22,13 @@
     }                                                                          \
   } while (false)
 
-#define RVNPU_IGNORE_STATUS(expr)                                              \
+#define DAYAN_IGNORE_STATUS(expr)                                              \
   do {                                                                         \
     Ort::Status ignored{(expr)};                                               \
   } while (false)
 
-#define RVNPU_EXCEPTION_GUARD_BEGIN try {
-#define RVNPU_EXCEPTION_GUARD_END                                              \
+#define DAYAN_EXCEPTION_GUARD_BEGIN try {
+#define DAYAN_EXCEPTION_GUARD_END                                              \
   }                                                                            \
   catch (const Ort::Exception &ex) {                                           \
     return Ort::Status(ex).release();                                          \
@@ -37,7 +37,7 @@
     return Ort::Status(ex.what(), ORT_EP_FAIL).release();                      \
   }                                                                            \
   catch (...) {                                                                \
-    return Ort::Status("unknown RVNPU EP exception", ORT_EP_FAIL).release();   \
+    return Ort::Status("unknown Dayan EP exception", ORT_EP_FAIL).release();   \
   }
 
 inline std::string GetSessionOption(const OrtSessionOptions &options,

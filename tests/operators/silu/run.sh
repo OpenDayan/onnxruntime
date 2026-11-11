@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
-ELF="${RVNPU_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
+ELF="${DAYAN_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
 [[ -e "${ELF}" ]] || : > "${ELF}"
-DIRECT_TEST="${BUILD_DIR}/test_rvnpu_elementwise"
-RUNNER="${BUILD_DIR}/test_rvnpu_onnx_model"
-PLUGIN="${BUILD_DIR}/librvnpu_ep.so"
+DIRECT_TEST="${BUILD_DIR}/test_dayan_elementwise"
+RUNNER="${BUILD_DIR}/test_dayan_onnx_model"
+PLUGIN="${BUILD_DIR}/libdayan_ep.so"
 DATA="${ROOT_DIR}/build/operators/silu"
 
 echo "[1/2] Direct SiLU kernel 数值测试"
@@ -17,9 +17,9 @@ echo
 echo "[2/2] Sigmoid+Mul 自动融合与数值测试"
 "${RUNNER}" --model "${DATA}/supported/model.onnx" --plugin "${PLUGIN}" \
   --kernel-elf "${ELF}" --data-dir "${DATA}/supported" \
-  --enabled-ops Silu --expect-rvnpu-counts Sigmoid=1,Mul=1 \
+  --enabled-ops Silu --expect-dayan-counts Sigmoid=1,Mul=1 \
   --atol 1e-4 --rtol 1e-4
 "${RUNNER}" --model "${DATA}/supported_swapped/model.onnx" \
   --plugin "${PLUGIN}" --kernel-elf "${ELF}" \
   --data-dir "${DATA}/supported_swapped" --enabled-ops Silu \
-  --expect-rvnpu-counts Sigmoid=1,Mul=1 --atol 1e-4 --rtol 1e-4
+  --expect-dayan-counts Sigmoid=1,Mul=1 --atol 1e-4 --rtol 1e-4

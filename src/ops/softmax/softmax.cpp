@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 int64_t KernelAxis(const OrtKernelInfo *info) {
@@ -19,17 +19,17 @@ int64_t ReadSoftmaxAxis(const Ort::ConstNode &node) {
   Ort::ConstOpAttr attribute;
   const Ort::Status status = node.GetAttributeByName("axis", attribute);
   if (!status.IsOK())
-    throw std::invalid_argument("cannot read RVNPU Softmax axis");
+    throw std::invalid_argument("cannot read Dayan Softmax axis");
   if (attribute == nullptr)
     return -1;
   int64_t axis = -1;
   const Ort::Status read_status = attribute.GetValue<int64_t>(axis);
   if (!read_status.IsOK())
-    throw std::invalid_argument("RVNPU Softmax axis is invalid");
+    throw std::invalid_argument("Dayan Softmax axis is invalid");
   return axis;
 }
 
-RVNPU_DEFINE_KERNEL(Softmax, kOnnxDomain, 13,
+DAYAN_DEFINE_KERNEL(Softmax, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     SoftmaxKernel)
@@ -43,34 +43,34 @@ SoftmaxKernel::SoftmaxKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *SoftmaxKernel::Create(const OrtKernelInfo *info, void *state,
                                  OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU Softmax has no DeviceContext");
+                                      "Dayan Softmax has no DeviceContext");
   output = new SoftmaxKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL SoftmaxKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<SoftmaxKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
   const auto info = input.GetTensorTypeAndShapeInfo();
   if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::invalid_argument("RVNPU Softmax requires FP32 input");
+    throw std::invalid_argument("Dayan Softmax requires FP32 input");
   const auto shape = ValidateSoftmaxAxis1Shape(info.GetShape(), self.axis_);
   Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
   self.context_->RunSoftmax(input.GetTensorData<float>(),
                             output.GetTensorMutableData<float>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL SoftmaxKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<SoftmaxKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

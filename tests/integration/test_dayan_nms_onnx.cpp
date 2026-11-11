@@ -12,8 +12,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 struct Options {
   std::string model;
@@ -111,41 +111,41 @@ std::vector<int64_t> Run(Ort::Session &session, std::vector<float> &boxes,
 }
 
 void CheckAssignment(const Ort::Session &session, bool expect_topk) {
-  size_t rvnpu = 0;
+  size_t dayan = 0;
   size_t cpu = 0;
-  size_t rvnpu_topk = 0;
+  size_t dayan_topk = 0;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     for (const auto &node : subgraph.GetNodes()) {
       if (node.GetOperatorType() == "TopK" &&
           std::string(subgraph.GetEpName()) == kEpName) {
-        ++rvnpu_topk;
+        ++dayan_topk;
       }
       if (node.GetOperatorType() != "NonMaxSuppression")
         continue;
       if (std::string(subgraph.GetEpName()) == kEpName)
-        ++rvnpu;
+        ++dayan;
       else
         ++cpu;
     }
   }
-  if (rvnpu != 1 || cpu != 0) {
+  if (dayan != 1 || cpu != 0) {
     throw std::runtime_error("unexpected NMS assignment");
   }
-  if ((expect_topk && rvnpu_topk != 1) || (!expect_topk && rvnpu_topk != 0))
+  if ((expect_topk && dayan_topk != 1) || (!expect_topk && dayan_topk != 0))
     throw std::runtime_error("unexpected TopK assignment in NMS graph");
 }
 
 int64_t Compare(const std::vector<int64_t> &actual,
                 const std::vector<int64_t> &expected) {
   if (actual.size() != expected.size())
-    throw std::runtime_error("CPU/RVNPU NMS output size mismatch");
+    throw std::runtime_error("CPU/Dayan NMS output size mismatch");
   int64_t maximum = 0;
   for (size_t index = 0; index < actual.size(); ++index) {
     const int64_t difference = std::abs(actual[index] - expected[index]);
     maximum = std::max(maximum, difference);
   }
   if (maximum != 0)
-    throw std::runtime_error("CPU/RVNPU NMS output mismatch");
+    throw std::runtime_error("CPU/Dayan NMS output mismatch");
   return maximum;
 }
 
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     const auto directory = std::filesystem::path(options.data_dir);
     std::vector<float> boxes = ReadBinary<float>(directory / "boxes.bin");
     std::vector<float> scores = ReadBinary<float>(directory / "scores.bin");
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-nms-onnx");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-nms-onnx");
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
     Ort::Session cpu_session(env, options.model.c_str(), cpu_options);
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
       CheckAssignment(session, options.expect_topk);
       const auto output = Run(session, boxes, scores);
       const int64_t difference = Compare(output, cpu);
-      std::cout << "CPU vs RVNPU max_abs_diff=" << difference << std::endl;
+      std::cout << "CPU vs Dayan max_abs_diff=" << difference << std::endl;
     }
     env.UnregisterExecutionProviderLibrary(kRegistrationName);
     std::cout << "PASS" << std::endl;

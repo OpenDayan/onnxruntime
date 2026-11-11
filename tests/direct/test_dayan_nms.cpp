@@ -147,13 +147,13 @@ TestCase MakeCase(const std::string &name) {
   throw std::invalid_argument("unknown NMS case: " + name);
 }
 
-void TestGatherNd(rvnpu::DeviceContext &context) {
+void TestGatherNd(dayan::DeviceContext &context) {
   const std::vector<float> candidates = {
       0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23};
   const std::vector<int64_t> candidate_indices = {2, 0};
   std::vector<float> selected_candidates(8);
   const auto candidate_shape =
-      rvnpu::ValidateGatherNdShape({3, 4}, {2, 1}, 0);
+      dayan::ValidateGatherNdShape({3, 4}, {2, 1}, 0);
   context.RunGatherNd(candidates.data(), candidate_indices.data(),
                       selected_candidates.data(), candidate_shape);
   if (selected_candidates !=
@@ -166,7 +166,7 @@ void TestGatherNd(rvnpu::DeviceContext &context) {
   const std::vector<int64_t> box_indices = {0, 2, 0, 0};
   std::vector<float> selected_boxes(8);
   const auto box_shape =
-      rvnpu::ValidateGatherNdShape({1, 4, 4}, {2, 2}, 0);
+      dayan::ValidateGatherNdShape({1, 4, 4}, {2, 2}, 0);
   context.RunGatherNd(boxes.data(), box_indices.data(),
                       selected_boxes.data(), box_shape);
   if (selected_boxes != std::vector<float>({4, 4, 5, 5, 0, 0, 1, 1}))
@@ -178,7 +178,7 @@ void TestGatherNd(rvnpu::DeviceContext &context) {
   const std::vector<int64_t> score_indices = {0, 1, 15, 0, 0, 0};
   std::vector<float> selected_scores(2);
   const auto score_shape =
-      rvnpu::ValidateGatherNdShape({1, 2, 16}, {2, 3}, 0);
+      dayan::ValidateGatherNdShape({1, 2, 16}, {2, 3}, 0);
   context.RunGatherNd(scores.data(), score_indices.data(),
                       selected_scores.data(), score_shape);
   if (selected_scores != std::vector<float>({scores[31], scores[0]}))
@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
     }
     if (kernel_elf.empty() || case_name.empty())
       throw std::invalid_argument("");
-    rvnpu::DeviceContext context(kernel_elf);
+    dayan::DeviceContext context(kernel_elf);
     if (case_name == "gathernd") {
       TestGatherNd(context);
       std::cout << "PASS case=gathernd candidates=2 boxes=2 scores=2"
@@ -211,7 +211,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     const TestCase test = MakeCase(case_name);
-    const auto shape = rvnpu::ValidateNmsShapes(
+    const auto shape = dayan::ValidateNmsShapes(
         {1, test.num_boxes, 4}, {1, test.num_classes, test.num_boxes},
         test.max_output, {test.center_point_box});
     const auto output =

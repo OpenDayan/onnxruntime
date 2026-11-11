@@ -34,25 +34,25 @@ if(NOT DAYAN_KERNEL_OBJECTS)
   message(FATAL_ERROR "No dycc-generated Dayan ONNX kernel objects in ${DAYAN_KERNEL_OBJECT_DIR}")
 endif()
 
-add_library(rvnpu_runtime_vendor STATIC
+add_library(dayan_runtime_vendor STATIC
   ${DAYAN_KERNEL_OBJECTS})
-target_include_directories(rvnpu_runtime_vendor PUBLIC
+target_include_directories(dayan_runtime_vendor PUBLIC
   "${DAYAN_RUNTIME_ROOT}/host/include")
-target_link_libraries(rvnpu_runtime_vendor PUBLIC
+target_link_libraries(dayan_runtime_vendor PUBLIC
   "${DAYAN_RUNTIME_ROOT}/build/host/driver/libDayanRuntime.a"
   ${CMAKE_DL_LIBS} pthread)
-set_target_properties(rvnpu_runtime_vendor PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(dayan_runtime_vendor PROPERTIES LINKER_LANGUAGE CXX)
 
-add_library(rvnpu_runtime_bridge STATIC
+add_library(dayan_runtime_bridge STATIC
   src/runtime/device_context.cpp
   src/runtime/device_buffer.cpp
   src/runtime/dayan_context_impl.cpp)
-target_include_directories(rvnpu_runtime_bridge PUBLIC
+target_include_directories(dayan_runtime_bridge PUBLIC
   src "${DAYAN_RUNTIME_ROOT}/host/include")
-target_link_libraries(rvnpu_runtime_bridge PUBLIC rvnpu_runtime_vendor)
+target_link_libraries(dayan_runtime_bridge PUBLIC dayan_runtime_vendor)
 
 
-add_library(rvnpu_ep SHARED
+add_library(dayan_ep SHARED
   src/plugin/plugin_entry.cpp
   src/plugin/ep_factory.cpp
   src/plugin/ep.cpp
@@ -67,89 +67,89 @@ add_library(rvnpu_ep SHARED
   src/ops/maxpool/maxpool.cpp
   src/ops/topk/topk.cpp
   src/ops/nms/nms.cpp)
-target_sources(rvnpu_ep PRIVATE
+target_sources(dayan_ep PRIVATE
   src/ops/resize/resize.cpp
   src/ops/reduce_max/reduce_max.cpp
   src/ops/slice/slice.cpp
   src/ops/softmax/softmax.cpp
   src/ops/split/split.cpp
   src/ops/transpose/transpose.cpp)
-target_include_directories(rvnpu_ep PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(rvnpu_ep PRIVATE rvnpu_runtime_bridge "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(rvnpu_ep PROPERTIES
-  OUTPUT_NAME rvnpu_ep
+target_include_directories(dayan_ep PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(dayan_ep PRIVATE dayan_runtime_bridge "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(dayan_ep PROPERTIES
+  OUTPUT_NAME dayan_ep
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
-target_link_options(rvnpu_ep PRIVATE
-  "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/rvnpu_ep.lds")
+target_link_options(dayan_ep PRIVATE
+  "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/dayan_ep.lds")
 
-add_executable(test_rvnpu_tiny_cnn tests/integration/test_rvnpu_tiny_cnn.cpp)
-target_include_directories(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_tiny_cnn PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_tiny_cnn PROPERTIES
+add_executable(test_dayan_tiny_cnn tests/integration/test_dayan_tiny_cnn.cpp)
+target_include_directories(test_dayan_tiny_cnn PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_tiny_cnn PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_tiny_cnn PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_onnx_model tests/integration/test_rvnpu_onnx_model.cpp)
-target_include_directories(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_onnx_model PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_onnx_model PROPERTIES
+add_executable(test_dayan_onnx_model tests/integration/test_dayan_onnx_model.cpp)
+target_include_directories(test_dayan_onnx_model PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_onnx_model PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_onnx_model PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_matmul tests/direct/test_rvnpu_matmul.cpp)
-target_include_directories(test_rvnpu_matmul PRIVATE src)
-target_link_libraries(test_rvnpu_matmul PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_matmul tests/direct/test_dayan_matmul.cpp)
+target_include_directories(test_dayan_matmul PRIVATE src)
+target_link_libraries(test_dayan_matmul PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_elementwise tests/direct/test_rvnpu_elementwise.cpp)
-target_include_directories(test_rvnpu_elementwise PRIVATE src)
-target_link_libraries(test_rvnpu_elementwise PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_elementwise tests/direct/test_dayan_elementwise.cpp)
+target_include_directories(test_dayan_elementwise PRIVATE src)
+target_link_libraries(test_dayan_elementwise PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_tensor_copy tests/direct/test_rvnpu_tensor_copy.cpp)
-target_include_directories(test_rvnpu_tensor_copy PRIVATE src)
-target_link_libraries(test_rvnpu_tensor_copy PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_tensor_copy tests/direct/test_dayan_tensor_copy.cpp)
+target_include_directories(test_dayan_tensor_copy PRIVATE src)
+target_link_libraries(test_dayan_tensor_copy PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_transform tests/direct/test_rvnpu_transform.cpp)
-target_include_directories(test_rvnpu_transform PRIVATE src)
-target_link_libraries(test_rvnpu_transform PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_transform tests/direct/test_dayan_transform.cpp)
+target_include_directories(test_dayan_transform PRIVATE src)
+target_link_libraries(test_dayan_transform PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_conv tests/direct/test_rvnpu_conv.cpp)
-target_include_directories(test_rvnpu_conv PRIVATE src)
-target_link_libraries(test_rvnpu_conv PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_conv tests/direct/test_dayan_conv.cpp)
+target_include_directories(test_dayan_conv PRIVATE src)
+target_link_libraries(test_dayan_conv PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_maxpool tests/direct/test_rvnpu_maxpool.cpp)
-target_include_directories(test_rvnpu_maxpool PRIVATE src)
-target_link_libraries(test_rvnpu_maxpool PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_maxpool tests/direct/test_dayan_maxpool.cpp)
+target_include_directories(test_dayan_maxpool PRIVATE src)
+target_link_libraries(test_dayan_maxpool PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_topk tests/direct/test_rvnpu_topk.cpp)
-target_include_directories(test_rvnpu_topk PRIVATE src)
-target_link_libraries(test_rvnpu_topk PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_topk tests/direct/test_dayan_topk.cpp)
+target_include_directories(test_dayan_topk PRIVATE src)
+target_link_libraries(test_dayan_topk PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_topk_onnx tests/integration/test_rvnpu_topk_onnx.cpp)
-target_include_directories(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_topk_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_topk_onnx PROPERTIES
+add_executable(test_dayan_topk_onnx tests/integration/test_dayan_topk_onnx.cpp)
+target_include_directories(test_dayan_topk_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_topk_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_topk_onnx PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_nms tests/direct/test_rvnpu_nms.cpp)
-target_include_directories(test_rvnpu_nms PRIVATE src)
-target_link_libraries(test_rvnpu_nms PRIVATE rvnpu_runtime_bridge)
+add_executable(test_dayan_nms tests/direct/test_dayan_nms.cpp)
+target_include_directories(test_dayan_nms PRIVATE src)
+target_link_libraries(test_dayan_nms PRIVATE dayan_runtime_bridge)
 
-add_executable(test_rvnpu_nms_onnx tests/integration/test_rvnpu_nms_onnx.cpp)
-target_include_directories(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_nms_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_nms_onnx PROPERTIES
+add_executable(test_dayan_nms_onnx tests/integration/test_dayan_nms_onnx.cpp)
+target_include_directories(test_dayan_nms_onnx PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_nms_onnx PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_nms_onnx PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_yolo_postprocess tests/integration/test_rvnpu_yolo_postprocess.cpp)
-target_include_directories(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_yolo_postprocess PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_yolo_postprocess PROPERTIES
+add_executable(test_dayan_yolo_postprocess tests/integration/test_dayan_yolo_postprocess.cpp)
+target_include_directories(test_dayan_yolo_postprocess PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_yolo_postprocess PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_yolo_postprocess PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
-add_executable(test_rvnpu_yolov8n tests/integration/test_rvnpu_yolov8n.cpp)
-target_include_directories(test_rvnpu_yolov8n PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
-target_link_libraries(test_rvnpu_yolov8n PRIVATE "${ONNXRUNTIME_LIBRARY}")
-set_target_properties(test_rvnpu_yolov8n PROPERTIES
+add_executable(test_dayan_yolov8n tests/integration/test_dayan_yolov8n.cpp)
+target_include_directories(test_dayan_yolov8n PRIVATE src "${ONNXRUNTIME_INCLUDE_DIR}")
+target_link_libraries(test_dayan_yolov8n PRIVATE "${ONNXRUNTIME_LIBRARY}")
+set_target_properties(test_dayan_yolov8n PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}")
 
 enable_testing()

@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
-ELF="${RVNPU_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
+ELF="${DAYAN_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
 [[ -e "${ELF}" ]] || : > "${ELF}"
-DIRECT_TEST="${BUILD_DIR}/test_rvnpu_matmul"
-RUNNER="${BUILD_DIR}/test_rvnpu_tiny_cnn"
-PLUGIN="${BUILD_DIR}/librvnpu_ep.so"
+DIRECT_TEST="${BUILD_DIR}/test_dayan_matmul"
+RUNNER="${BUILD_DIR}/test_dayan_tiny_cnn"
+PLUGIN="${BUILD_DIR}/libdayan_ep.so"
 MODEL_DIR="${ROOT_DIR}/build/models"
 
 echo "[1/3] Direct kernel 数值测试"
@@ -21,6 +21,6 @@ echo "[2/3] MatMul 端到端性能测试"
   --benchmark --warmup 1 --iterations 5
 
 echo
-echo "[3/3] tiny CNN：CPU/RVNPU 输出对比"
+echo "[3/3] tiny CNN：CPU/Dayan 输出对比"
 "${RUNNER}" --model "${MODEL_DIR}/tiny_cnn.onnx" --plugin "${PLUGIN}" \
   --kernel-elf "${ELF}" --data-dir "${MODEL_DIR}"

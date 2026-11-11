@@ -25,7 +25,7 @@ def make_concat(directory: Path) -> None:
     a_shape, b_shape = [1, 2, 2, 16], [1, 1, 2, 16]
     graph = helper.make_graph(
         [helper.make_node("Concat", ["a", "b"], ["output"], axis=1)],
-        "rvnpu_concat_test",
+        "dayan_concat_test",
         [helper.make_tensor_value_info("a", TensorProto.FLOAT, a_shape),
          helper.make_tensor_value_info("b", TensorProto.FLOAT, b_shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 3, 2, 16])],
@@ -39,7 +39,7 @@ def make_split(directory: Path) -> None:
     split = helper.make_tensor("split", TensorProto.INT64, [2], [2, 2])
     graph = helper.make_graph(
         [helper.make_node("Split", ["input", "split"], ["first", "unused"], axis=1)],
-        "rvnpu_split_test",
+        "dayan_split_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, shape)],
         [helper.make_tensor_value_info("first", TensorProto.FLOAT, [1, 2, 2, 16])],
         [split],
@@ -57,7 +57,7 @@ def make_slice(directory: Path) -> None:
     ]
     graph = helper.make_graph(
         [helper.make_node("Slice", ["input", "starts", "ends", "axes"], ["output"])],
-        "rvnpu_slice_test",
+        "dayan_slice_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 2, 16])],
         initializers,

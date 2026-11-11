@@ -15,8 +15,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 template <typename T>
 std::vector<T> ReadBinary(const std::filesystem::path &path) {
@@ -120,10 +120,10 @@ size_t CheckAssignment(const Ort::Session &session) {
                            "GatherND"}) {
     if (counts[name] == 0)
       throw std::runtime_error(std::string(name) +
-                               " was not assigned to RVNPU");
+                               " was not assigned to Dayan");
   }
   if (counts["GatherND"] != 2)
-    throw std::runtime_error("unexpected RVNPU GatherND assignment count");
+    throw std::runtime_error("unexpected Dayan GatherND assignment count");
   size_t total = 0;
   for (const auto &entry : counts)
     total += entry.second;
@@ -146,7 +146,7 @@ void CheckFinalOutputs(const Output &output) {
 }
 
 void WriteOutputJson(const std::filesystem::path &path, const Output &cpu,
-                     const Output &rvnpu) {
+                     const Output &dayan) {
   if (!path.parent_path().empty())
     std::filesystem::create_directories(path.parent_path());
   std::ofstream stream(path);
@@ -169,7 +169,7 @@ void WriteOutputJson(const std::filesystem::path &path, const Output &cpu,
     stream << "  ]" << (last ? "\n" : ",\n");
   };
   write("cpu", cpu, false);
-  write("rvnpu", rvnpu, true);
+  write("dayan", dayan, true);
   stream << "}\n";
 }
 
@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
   try {
     if (argc < 5)
       throw std::invalid_argument(
-          "usage: test_rvnpu_yolo_postprocess MODEL PLUGIN ELF DATA_DIR "
+          "usage: test_dayan_yolo_postprocess MODEL PLUGIN ELF DATA_DIR "
           "[--smoke] [--results-json PATH]");
     const std::string model = argv[1];
     const std::string plugin = argv[2];
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-yolo-postprocess");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-yolo-postprocess");
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
     Ort::Session cpu_session(env, model.c_str(), cpu_options);
@@ -232,30 +232,30 @@ int main(int argc, char **argv) {
           {"kernel_elf", kernel_elf}};
       options.AppendExecutionProvider_V2(env, devices, ep_options);
       Ort::Session session(env, model.c_str(), options);
-      const size_t rvnpu_nodes = CheckAssignment(session);
-      const Output rvnpu = Run(session, raw);
+      const size_t dayan_nodes = CheckAssignment(session);
+      const Output dayan = Run(session, raw);
       CheckFinalOutputs(cpu);
-      CheckFinalOutputs(rvnpu);
+      CheckFinalOutputs(dayan);
       if (!results_json.empty())
-        WriteOutputJson(results_json, cpu, rvnpu);
+        WriteOutputJson(results_json, cpu, dayan);
       std::cout << "cpu_detections=" << cpu.classes.size()
-                << " rvnpu_detections=" << rvnpu.classes.size() << std::endl;
-      const bool same_sizes = rvnpu.boxes.size() == cpu.boxes.size() &&
-                              rvnpu.scores.size() == cpu.scores.size();
+                << " dayan_detections=" << dayan.classes.size() << std::endl;
+      const bool same_sizes = dayan.boxes.size() == cpu.boxes.size() &&
+                              dayan.scores.size() == cpu.scores.size();
       const float boxes_diff =
-          same_sizes ? CompareFloat(rvnpu.boxes, cpu.boxes)
+          same_sizes ? CompareFloat(dayan.boxes, cpu.boxes)
                      : std::numeric_limits<float>::quiet_NaN();
       const float scores_diff =
-          same_sizes ? CompareFloat(rvnpu.scores, cpu.scores)
+          same_sizes ? CompareFloat(dayan.scores, cpu.scores)
                      : std::numeric_limits<float>::quiet_NaN();
-      const size_t class_mismatches = ClassMismatches(rvnpu, cpu);
+      const size_t class_mismatches = ClassMismatches(dayan, cpu);
       if (!smoke &&
           (!same_sizes || boxes_diff != 0.0f || scores_diff != 0.0f ||
            class_mismatches != 0)) {
-        throw std::runtime_error("CPU/RVNPU postprocess outputs mismatch");
+        throw std::runtime_error("CPU/Dayan postprocess outputs mismatch");
       }
-      std::cout << "rvnpu_nodes=" << rvnpu_nodes
-                << " detections=" << rvnpu.classes.size()
+      std::cout << "dayan_nodes=" << dayan_nodes
+                << " detections=" << dayan.classes.size()
                 << " boxes_max_abs_diff=" << boxes_diff
                 << " scores_max_abs_diff=" << scores_diff
                 << " class_mismatches=" << class_mismatches << std::endl;

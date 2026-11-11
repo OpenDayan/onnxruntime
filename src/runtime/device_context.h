@@ -12,28 +12,28 @@
 #include "npu_runtime.h"
 #include "runtime/tensor_utils.h"
 
-int rvnpu_add_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_mul_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_sub_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_div_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_binary_broadcast_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_sigmoid_f32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_silu_f32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_concat_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_split_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_slice_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_slice_int64(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_resize_nearest_nchw_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_transpose_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_transpose_10_int64(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_softmax_axis1_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_reduce_max_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_argmax_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_maxpool2d_nchw_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_topk_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_gather_nd_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_gather_nd_int64(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
-int rvnpu_nms_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_add_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
+int dayan_mul_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
+int dayan_sub_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
+int dayan_div_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint64_t, const npu_kernel_launch_attrs_t *);
+int dayan_binary_broadcast_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_sigmoid_f32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_silu_f32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_concat_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_split_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_slice_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_slice_int64(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_resize_nearest_nchw_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_transpose_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_transpose_10_int64(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_softmax_axis1_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_reduce_max_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_argmax_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_maxpool2d_nchw_fp32(npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_topk_lastdim_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_gather_nd_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_gather_nd_int64(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
+int dayan_nms_fp32(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const npu_kernel_launch_attrs_t *);
 // demo matmul_bf16_1c 原版内核：形状与步长打包成 MatmulBf16Config 走 DDR，
 // 布局必须与 demo/onnx/kernel_matmul_1c.cpp 里的定义逐字段一致。
 struct MatmulBf16Config {
@@ -54,7 +54,7 @@ struct Conv2dTileConfig {
 static_assert(sizeof(Conv2dTileConfig) == 26U * sizeof(uint32_t),
               "Conv host/device ABI mismatch");
 bool conv2d_plan_tiles(Conv2dTileConfig *);
-#if defined(RVNPU_CONV_PROFILE)
+#if defined(DAYAN_CONV_PROFILE)
 struct alignas(64) Conv2dProfileRecord {
   uint64_t start, end, call_id, task, hart, completed, phase[16];
 };
@@ -65,7 +65,7 @@ int conv2d_tile_4c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t 
 int conv2d_tile_4c(npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, npu_buffer_t *, const npu_kernel_launch_attrs_t *);
 #endif
 
-namespace rvnpu {
+namespace dayan {
 
 class DayanRuntime final {
 public:
@@ -170,4 +170,4 @@ private:
 
 using DeviceContextPtr = std::shared_ptr<DeviceContext>;
 
-} // namespace rvnpu
+} // namespace dayan

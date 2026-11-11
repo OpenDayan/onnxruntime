@@ -140,29 +140,29 @@ def box_iou(left: list[float], right: list[float]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def match_detections(cpu: list[dict], rvnpu: list[dict], threshold: float) -> dict:
-    unmatched_rvnpu = set(range(len(rvnpu)))
+def match_detections(cpu: list[dict], dayan: list[dict], threshold: float) -> dict:
+    unmatched_dayan = set(range(len(dayan)))
     matches = []
     unmatched_cpu = []
     for cpu_index, cpu_detection in enumerate(cpu):
         candidates = [
-            (box_iou(cpu_detection["box"], rvnpu[index]["box"]), index)
-            for index in unmatched_rvnpu
-            if rvnpu[index]["class_id"] == cpu_detection["class_id"]
+            (box_iou(cpu_detection["box"], dayan[index]["box"]), index)
+            for index in unmatched_dayan
+            if dayan[index]["class_id"] == cpu_detection["class_id"]
         ]
         best_iou, best_index = max(candidates, default=(0.0, -1))
         if best_index < 0 or best_iou < threshold:
             unmatched_cpu.append(cpu_index)
             continue
-        unmatched_rvnpu.remove(best_index)
+        unmatched_dayan.remove(best_index)
         matches.append(
             {
                 "cpu_index": cpu_index,
-                "rvnpu_index": best_index,
+                "dayan_index": best_index,
                 "class_id": cpu_detection["class_id"],
                 "iou": best_iou,
                 "score_abs_diff": abs(
-                    cpu_detection["score"] - rvnpu[best_index]["score"]
+                    cpu_detection["score"] - dayan[best_index]["score"]
                 ),
             }
         )
@@ -170,10 +170,10 @@ def match_detections(cpu: list[dict], rvnpu: list[dict], threshold: float) -> di
     score_diffs = [match["score_abs_diff"] for match in matches]
     return {
         "cpu_count": len(cpu),
-        "rvnpu_count": len(rvnpu),
+        "dayan_count": len(dayan),
         "matched": len(matches),
         "unmatched_cpu": unmatched_cpu,
-        "unmatched_rvnpu": sorted(unmatched_rvnpu),
+        "unmatched_dayan": sorted(unmatched_dayan),
         "mean_iou": float(np.mean(ious)) if ious else 0.0,
         "min_iou": min(ious, default=0.0),
         "iou_at_least_0_95": sum(value >= 0.95 for value in ious),
@@ -202,17 +202,17 @@ def draw(args: argparse.Namespace) -> None:
 
     box_format = results.get("box_format", "cxcywh")
     cpu = [xyxy_detection(item, metadata, box_format) for item in results["cpu"]]
-    rvnpu = [
+    dayan = [
         xyxy_detection(item, metadata, box_format)
-        for item in results.get("rvnpu", [])
+        for item in results.get("dayan", [])
     ]
     comparison = (
-        match_detections(cpu, rvnpu, args.match_iou)
-        if "rvnpu" in results
+        match_detections(cpu, dayan, args.match_iou)
+        if "dayan" in results
         else {"cpu_count": len(cpu)}
     )
     comparison["cpu"] = cpu
-    comparison["rvnpu"] = rvnpu
+    comparison["dayan"] = dayan
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(metadata["image_path"]).stem
@@ -220,21 +220,21 @@ def draw(args: argparse.Namespace) -> None:
     cpu_image = image.copy()
     draw_detections(cpu_image, cpu, names, (0, 180, 0))
     cpu_image.save(args.output_dir / f"{stem}_cpu.jpg", quality=95)
-    if "rvnpu" in results:
-        rvnpu_image = image.copy()
+    if "dayan" in results:
+        dayan_image = image.copy()
         overlay_image = image.copy()
-        draw_detections(rvnpu_image, rvnpu, names, (255, 0, 0))
+        draw_detections(dayan_image, dayan, names, (255, 0, 0))
         draw_detections(overlay_image, cpu, names, (0, 180, 0))
-        draw_detections(overlay_image, rvnpu, names, (255, 0, 0))
-        rvnpu_image.save(args.output_dir / f"{stem}_rvnpu.jpg", quality=95)
+        draw_detections(overlay_image, dayan, names, (255, 0, 0))
+        dayan_image.save(args.output_dir / f"{stem}_dayan.jpg", quality=95)
         overlay_image.save(args.output_dir / f"{stem}_overlay.jpg", quality=95)
     (args.output_dir / "comparison.json").write_text(
         json.dumps(comparison, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if "rvnpu" in results:
+    if "dayan" in results:
         print(
             f"detections cpu={comparison['cpu_count']} "
-            f"rvnpu={comparison['rvnpu_count']} matched={comparison['matched']} "
+            f"dayan={comparison['dayan_count']} matched={comparison['matched']} "
             f"mean_iou={comparison['mean_iou']:.6g} "
             f"max_score_abs_diff={comparison['max_score_abs_diff']:.6g}"
         )

@@ -5,7 +5,7 @@
 
 #include "runtime/device_buffer.h"
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -116,4 +116,4 @@ void DeviceContext::RunAdd(const float *lhs, const float *rhs, float *output,
                            const BinaryElementwiseShape &shape) {
   RunBinary("Add", lhs, rhs, output, shape, 0);
 }
-} // namespace rvnpu
+} // namespace dayan

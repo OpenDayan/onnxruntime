@@ -5,7 +5,7 @@
 #include "plugin/kernel_registry.h"
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
 struct ResizeAttributes {
   std::string coordinate_transformation_mode;
@@ -30,4 +30,4 @@ private:
   DeviceContext *context_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

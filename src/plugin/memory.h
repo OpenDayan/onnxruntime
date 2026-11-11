@@ -4,7 +4,7 @@
 
 #include "plugin/plugin_utils.h"
 
-namespace rvnpu {
+namespace dayan {
 
 struct HostStagingAllocator final : OrtAllocator {
   explicit HostStagingAllocator(const OrtMemoryInfo *memory_info);
@@ -36,4 +36,4 @@ struct HostStagingDataTransfer final : OrtDataTransferImpl {
   const OrtMemoryDevice *device_;
 };
 
-} // namespace rvnpu
+} // namespace dayan

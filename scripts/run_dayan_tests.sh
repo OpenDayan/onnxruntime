@@ -8,7 +8,7 @@
 #   --out DIR     direct-ops 结果目录。
 #   op            只运行指定算子，如 add、matmul、yolov8n-official。
 #
-# DAYAN_SERVER_SOCKET 指定 dayan_server socket；RVNPU_YOLO_IMAGE 指定测试图片。
+# DAYAN_SERVER_SOCKET 指定 dayan_server socket；DAYAN_YOLO_IMAGE 指定测试图片。
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,10 +43,10 @@ set -- ${POS[@]+"${POS[@]}"}
 export LD_LIBRARY_PATH="${ROOT_DIR}/build/ort-sdk/lib:${LD_LIBRARY_PATH:-}"
 export DAYAN_SERVER_SOCKET="${DAYAN_SERVER_SOCKET:-${TMPDIR:-/tmp}/dayan-server.sock}"
 export BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
-export RVNPU_KERNEL_ELF="${RVNPU_KERNEL_ELF:-${ROOT_DIR}/build/dummy-kernel-elf}"
+export DAYAN_KERNEL_ELF="${DAYAN_KERNEL_ELF:-${ROOT_DIR}/build/dummy-kernel-elf}"
 
 mkdir -p "${TEST_LOG_DIR}"
-[[ -e "${RVNPU_KERNEL_ELF}" ]] || : > "${RVNPU_KERNEL_ELF}"
+[[ -e "${DAYAN_KERNEL_ELF}" ]] || : > "${DAYAN_KERNEL_ELF}"
 
 tc_available() {
   command -v tmux >/dev/null 2>&1 && tmux has-session -t "${TC_SESSION}" 2>/dev/null
@@ -177,7 +177,7 @@ run_direct_sample() {
   for attempt in 1 2 3; do
     c0="$(tc_cycles)"
     if timeout 600 "${BUILD_DIR}/${tool}" \
-          --kernel-elf "${RVNPU_KERNEL_ELF}" ${args} >"${TEST_LOG_DIR}/direct-${name}.log" 2>&1; then
+          --kernel-elf "${DAYAN_KERNEL_ELF}" ${args} >"${TEST_LOG_DIR}/direct-${name}.log" 2>&1; then
       rc=0
     else
       rc=1
@@ -322,19 +322,19 @@ direct_ops() {
 
   # 大 conv 的中断积聚会污染后续样本的周期读数，必须最后运行。
   local samples=(
-    "add|test_rvnpu_elementwise|--op add --shape 2,3,5 --rhs-shape 2,3,5"
-    "add_mid|test_rvnpu_elementwise|--op add --shape 1,64,2,2 --rhs-shape 1,64,2,2"
-    "div|test_rvnpu_elementwise|--op div --shape 1,2,16 --rhs-shape 1"
-    "sigmoid|test_rvnpu_elementwise|--op sigmoid --shape 2,3,5"
-    "sigmoid_mid|test_rvnpu_elementwise|--op sigmoid --shape 1,64,2,2"
-    "mul|test_rvnpu_elementwise|--op mul --shape 2,3,5 --rhs-shape 2,3,5"
-    "mul_mid|test_rvnpu_elementwise|--op mul --shape 1,64,2,2 --rhs-shape 1,64,2,2"
-    "maxpool|test_rvnpu_maxpool| --input-shape 1,3,8,9 --kernel 2,2 --stride 2,2 --pad 0,0"
-    "softmax|test_rvnpu_transform|--op softmax"
-    "reduce_max|test_rvnpu_transform|--op reduce_max"
-    "resize|test_rvnpu_transform|--op resize"
-    "nms|test_rvnpu_nms|--case nonoverlap"
-    "conv|test_rvnpu_conv|${conv_args}"
+    "add|test_dayan_elementwise|--op add --shape 2,3,5 --rhs-shape 2,3,5"
+    "add_mid|test_dayan_elementwise|--op add --shape 1,64,2,2 --rhs-shape 1,64,2,2"
+    "div|test_dayan_elementwise|--op div --shape 1,2,16 --rhs-shape 1"
+    "sigmoid|test_dayan_elementwise|--op sigmoid --shape 2,3,5"
+    "sigmoid_mid|test_dayan_elementwise|--op sigmoid --shape 1,64,2,2"
+    "mul|test_dayan_elementwise|--op mul --shape 2,3,5 --rhs-shape 2,3,5"
+    "mul_mid|test_dayan_elementwise|--op mul --shape 1,64,2,2 --rhs-shape 1,64,2,2"
+    "maxpool|test_dayan_maxpool| --input-shape 1,3,8,9 --kernel 2,2 --stride 2,2 --pad 0,0"
+    "softmax|test_dayan_transform|--op softmax"
+    "reduce_max|test_dayan_transform|--op reduce_max"
+    "resize|test_dayan_transform|--op resize"
+    "nms|test_dayan_nms|--case nonoverlap"
+    "conv|test_dayan_conv|${conv_args}"
   )
 
   for s in "${samples[@]}"; do

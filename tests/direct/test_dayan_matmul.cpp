@@ -90,9 +90,9 @@ std::vector<float> ReadFloats(const std::string &path, size_t expected) {
 // 降到 BF16 再做 FP32 累加——设备路径正是这个精度语义。
 std::vector<float> ReferenceMatMul(const std::vector<float> &a,
                                    const std::vector<float> &b,
-                                   const rvnpu::MatMulShape &shape) {
+                                   const dayan::MatMulShape &shape) {
   std::vector<float> reference;
-  rvnpu::MatMulBf16Reference(a, b, reference, shape);
+  dayan::MatMulBf16Reference(a, b, reference, shape);
   return reference;
 }
 
@@ -144,7 +144,7 @@ double Median(std::vector<double> samples) {
 int main(int argc, char **argv) {
   try {
     const auto options = Parse(argc, argv);
-    const auto shape = rvnpu::ValidateMatMulShapes({options.m, options.k},
+    const auto shape = dayan::ValidateMatMulShapes({options.m, options.k},
                                                    {options.k, options.n});
     std::vector<float> a(shape.a_elements);
     std::vector<float> b(shape.b_elements);
@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
 
     using Clock = std::chrono::steady_clock;
     const auto setup_begin = Clock::now();
-    rvnpu::DeviceContext context(options.kernel_elf);
+    dayan::DeviceContext context(options.kernel_elf);
     const double setup_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - setup_begin)
             .count();

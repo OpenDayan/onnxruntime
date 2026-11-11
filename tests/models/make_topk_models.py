@@ -24,14 +24,14 @@ def make_case(directory: Path, shape: list[int], k: int) -> None:
         "TopK",
         ["input", "k"],
         ["values", "indices"],
-        name="rvnpu_test_topk",
+        name="dayan_test_topk",
         axis=-1,
         largest=1,
         sorted=1,
     )
     graph = helper.make_graph(
         [node],
-        "rvnpu_topk_test",
+        "dayan_topk_test",
         [input_info],
         [values_info, indices_info],
         [numpy_helper.from_array(k_value, "k")],

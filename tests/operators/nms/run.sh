@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
-ELF="${RVNPU_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
+ELF="${DAYAN_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
 [[ -e "${ELF}" ]] || : > "${ELF}"
-DIRECT_TEST="${BUILD_DIR}/test_rvnpu_nms"
-RUNNER="${BUILD_DIR}/test_rvnpu_nms_onnx"
-PLUGIN="${BUILD_DIR}/librvnpu_ep.so"
+DIRECT_TEST="${BUILD_DIR}/test_dayan_nms"
+RUNNER="${BUILD_DIR}/test_dayan_nms_onnx"
+PLUGIN="${BUILD_DIR}/libdayan_ep.so"
 DATA="${ROOT_DIR}/build/operators/nms"
 
 echo "[1/2] Direct kernel 数值测试"
@@ -28,6 +28,6 @@ echo "model=TopK+NMS"
   --kernel-elf "${ELF}" --data-dir "${DATA}/topk_pipeline" \
   --expect-topk
 echo "model=YOLO Split+Transpose+NMS+GatherND"
-"${BUILD_DIR}/test_rvnpu_yolo_postprocess" \
+"${BUILD_DIR}/test_dayan_yolo_postprocess" \
   "${DATA}/yolo_postprocess/model.onnx" "${PLUGIN}" "${ELF}" \
   "${DATA}/yolo_postprocess"

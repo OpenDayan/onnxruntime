@@ -20,7 +20,7 @@
 | NonMaxSuppression | batch=1、corner/center boxes、常量 max output≤300 | `non_max_suppression_fp32` |
 | GatherND | FP32/INT64 rank 1～3 data、INT64 `[K,D]` indices、batch_dims=0 | `gather_nd_fp32` / `gather_nd_int64` |
 
-YOLOv8n 中的普通 `Gather`、shape 控制和输出打包节点留给 ORT 处理。后处理中的 INT64 类别编号由 RVNPU `GatherND` 读取。
+YOLOv8n 中的普通 `Gather`、shape 控制和输出打包节点留给 ORT 处理。后处理中的 INT64 类别编号由 Dayan `GatherND` 读取。
 
 ## 2. 调用链
 
@@ -28,7 +28,7 @@ YOLOv8n 中的普通 `Gather`、shape 控制和输出打包节点留给 ORT 处�
 
 ```text
 ONNX ai.onnx::Conv
-  -> RvnpuEp::SupportsConv
+  -> DayanEp::SupportsConv
        src/plugin/ep.cpp
   -> ConvKernel::ComputeImpl
        src/ops/conv/conv.cpp
@@ -60,7 +60,7 @@ src/runtime/device_context.h/.cpp
 
 tests/operators/matmul/prepare.sh
 tests/operators/matmul/run.sh
-tests/direct/test_rvnpu_matmul.cpp
+tests/direct/test_dayan_matmul.cpp
   device kernel 数值测试
 
 CMakeLists.txt
@@ -85,4 +85,4 @@ CMakeLists.txt
 ./scripts/run_dayan_tests.sh <name>
 ```
 
-测试包含 device kernel 数值检查，以及标准 ONNX 模型的一次 CPU/RVNPU 输出对比。ORT 测试必须在内部确认目标节点确实分配给 RVNPU。
+测试包含 device kernel 数值检查，以及标准 ONNX 模型的一次 CPU/Dayan 输出对比。ORT 测试必须在内部确认目标节点确实分配给 Dayan。

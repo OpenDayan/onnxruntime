@@ -9,14 +9,14 @@
 #include <vector>
 
 int main() {
-  const auto shape = rvnpu::ValidateMatMulShapes({1, 32}, {32, 32});
+  const auto shape = dayan::ValidateMatMulShapes({1, 32}, {32, 32});
   assert(shape.m == 1 && shape.n == 32 && shape.k == 32);
   assert(shape.a_elements == 32 && shape.b_elements == 1024 &&
          shape.y_elements == 32);
 
   bool rejected = false;
   try {
-    static_cast<void>(rvnpu::ValidateMatMulShapes({32}, {32, 32}));
+    static_cast<void>(dayan::ValidateMatMulShapes({32}, {32, 32}));
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
@@ -24,7 +24,7 @@ int main() {
 
   rejected = false;
   try {
-    static_cast<void>(rvnpu::ValidateMatMulShapes({1, 31}, {32, 32}));
+    static_cast<void>(dayan::ValidateMatMulShapes({1, 31}, {32, 32}));
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
@@ -43,7 +43,7 @@ int main() {
     rejected = false;
     try {
       static_cast<void>(
-          rvnpu::ValidateMatMulShapes(shapes.first, shapes.second));
+          dayan::ValidateMatMulShapes(shapes.first, shapes.second));
     } catch (const std::exception &) {
       rejected = true;
     }
@@ -52,21 +52,21 @@ int main() {
 
   // These element/byte counts fit size_t on the supported 64-bit host.
   // Shape validation does not allocate these tensors.
-  const auto large = rvnpu::ValidateMatMulShapes(
+  const auto large = dayan::ValidateMatMulShapes(
       {INT32_MAX, INT32_MAX}, {INT32_MAX, INT32_MAX});
   assert(large.a_elements == size_t(INT32_MAX) * INT32_MAX);
 
-  const auto unary = rvnpu::ValidateUnaryTensorShape({2, 3, 5}, "Sigmoid");
+  const auto unary = dayan::ValidateUnaryTensorShape({2, 3, 5}, "Sigmoid");
   assert(unary.elements == 30);
   assert((unary.dims == std::array<uint32_t, 4>{5, 3, 2, 1}));
 
   const auto same =
-      rvnpu::ValidateBinaryElementwiseShapes({2, 3}, {2, 3}, "Add");
+      dayan::ValidateBinaryElementwiseShapes({2, 3}, {2, 3}, "Add");
   assert(!same.swap_inputs && same.output_elements == 6);
   assert((same.output_shape == std::vector<int64_t>{2, 3}));
   assert((same.broadcast_dims == std::array<uint32_t, 4>{3, 2, 1, 1}));
 
-  const auto broadcast = rvnpu::ValidateBinaryElementwiseShapes(
+  const auto broadcast = dayan::ValidateBinaryElementwiseShapes(
       {1, 3, 1, 1}, {1, 3, 4, 5}, "Mul");
   assert(broadcast.swap_inputs && broadcast.output_elements == 60);
   assert((broadcast.output_dims == std::array<uint32_t, 4>{5, 4, 3, 1}));
@@ -74,39 +74,39 @@ int main() {
           std::array<uint32_t, 4>{1, 1, 3, 1}));
 
   const auto empty =
-      rvnpu::ValidateBinaryElementwiseShapes({0}, {}, "Div");
+      dayan::ValidateBinaryElementwiseShapes({0}, {}, "Div");
   assert(empty.output_elements == 0);
   assert((empty.output_shape == std::vector<int64_t>{0}));
 
   const auto empty_concat =
-      rvnpu::ValidateConcatShapes({{0, 2}, {0, 3}}, 1);
+      dayan::ValidateConcatShapes({{0, 2}, {0, 3}}, 1);
   assert(empty_concat.output_elements == 0 && empty_concat.outer == 0);
   assert((empty_concat.output_shape == std::vector<int64_t>{0, 5}));
 
   const auto empty_slice =
-      rvnpu::ValidateSliceShape({0, 4}, 0, 2, 1, 1);
+      dayan::ValidateSliceShape({0, 4}, 0, 2, 1, 1);
   assert(empty_slice.output_elements == 0 && empty_slice.outer == 0);
   assert((empty_slice.output_shape == std::vector<int64_t>{0, 2}));
 
   rejected = false;
   try {
     static_cast<void>(
-        rvnpu::ValidateBinaryElementwiseShapes({2, 1}, {1, 3}, "Add"));
+        dayan::ValidateBinaryElementwiseShapes({2, 1}, {1, 3}, "Add"));
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
   assert(rejected);
 
   // Scalars are supported by the current shape utility.
-  const auto scalar = rvnpu::ValidateUnaryTensorShape({}, "Sigmoid");
+  const auto scalar = dayan::ValidateUnaryTensorShape({}, "Sigmoid");
   assert(scalar.elements == 1 && scalar.output_shape.empty());
 
-  rvnpu::ConvAttributes conv_attributes;
+  dayan::ConvAttributes conv_attributes;
   conv_attributes.kernel_shape = {3, 3};
   conv_attributes.pads = {1, 1, 1, 1};
   conv_attributes.strides = {2, 2};
   const std::vector<int64_t> bias_shape{16};
-  const auto conv = rvnpu::ValidateConvShapes(
+  const auto conv = dayan::ValidateConvShapes(
       {1, 3, 64, 64}, {16, 3, 3, 3}, &bias_shape, conv_attributes);
   assert((conv.output_shape == std::vector<int64_t>{1, 16, 32, 32}));
   assert(conv.output_elements == 1024 * 16);
@@ -116,72 +116,72 @@ int main() {
   try {
     auto unsupported = conv_attributes;
     unsupported.group = 3;
-    static_cast<void>(rvnpu::ValidateConvShapes(
+    static_cast<void>(dayan::ValidateConvShapes(
         {1, 3, 64, 64}, {16, 1, 3, 3}, nullptr, unsupported));
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
   assert(rejected);
 
-  rvnpu::MaxPoolAttributes pool_attributes;
+  dayan::MaxPoolAttributes pool_attributes;
   pool_attributes.kernel_shape = {5, 5};
   pool_attributes.pads = {2, 2, 2, 2};
-  const auto pool = rvnpu::ValidateMaxPoolShape(
+  const auto pool = dayan::ValidateMaxPoolShape(
       {1, 16, 32, 32}, pool_attributes);
   assert((pool.output_shape == std::vector<int64_t>{1, 16, 32, 32}));
   assert(pool.output_elements == 16 * 32 * 32);
 
   const auto transpose =
-      rvnpu::ValidateTransposeShape({1, 4, 8400}, {0, 2, 1});
+      dayan::ValidateTransposeShape({1, 4, 8400}, {0, 2, 1});
   assert(transpose.rank == 3 && transpose.dims[3] == 1);
   assert((transpose.output_shape == std::vector<int64_t>{1, 8400, 4}));
 
   const auto transpose_int64 =
-      rvnpu::ValidateTransposeShape({5, 2}, {1, 0});
+      dayan::ValidateTransposeShape({5, 2}, {1, 0});
   assert(transpose_int64.rank == 2 && transpose_int64.elements == 10);
   assert((transpose_int64.output_shape == std::vector<int64_t>{2, 5}));
 
   const auto empty_transpose =
-      rvnpu::ValidateTransposeShape({1, 0}, {1, 0});
+      dayan::ValidateTransposeShape({1, 0}, {1, 0});
   assert(empty_transpose.elements == 0);
   assert((empty_transpose.output_shape == std::vector<int64_t>{0, 1}));
 
-  const auto reverse_slice = rvnpu::ValidateSliceShape(
+  const auto reverse_slice = dayan::ValidateSliceShape(
       {5, 2}, -1, std::numeric_limits<int64_t>::min() + 1, 0, -1);
   assert(reverse_slice.start == 4 && reverse_slice.length == 5 &&
          reverse_slice.step == -1);
   assert((reverse_slice.output_shape == std::vector<int64_t>{5, 2}));
 
-  const auto nms = rvnpu::ValidateNmsShapes(
+  const auto nms = dayan::ValidateNmsShapes(
       {1, 8400, 4}, {1, 80, 8400}, 300, {1});
   assert(nms.center_point_box == 1 && nms.num_boxes == 8400 &&
          nms.num_classes == 80);
 
   const auto empty_nms =
-      rvnpu::ValidateNmsShapes({1, 0, 4}, {1, 1, 0}, 300, {});
+      dayan::ValidateNmsShapes({1, 0, 4}, {1, 1, 0}, 300, {});
   assert(empty_nms.num_boxes == 0 && empty_nms.boxes_elements == 0 &&
          empty_nms.scores_elements == 0);
 
-  const auto topk = rvnpu::ValidateTopKShape({1, 8400, 80}, 1, {});
+  const auto topk = dayan::ValidateTopKShape({1, 8400, 80}, 1, {});
   assert(topk.rows == 8400 && topk.columns == 80 && topk.k == 1);
   assert((topk.output_shape == std::vector<int64_t>{1, 8400, 1}));
 
-  rvnpu::ArgMaxAttributes argmax_attributes;
+  dayan::ArgMaxAttributes argmax_attributes;
   argmax_attributes.axis = -1;
   argmax_attributes.keepdims = 0;
   const auto argmax =
-      rvnpu::ValidateArgMaxShape({1, 8400, 80}, argmax_attributes);
+      dayan::ValidateArgMaxShape({1, 8400, 80}, argmax_attributes);
   assert(argmax.rows == 8400 && argmax.columns == 80);
   assert((argmax.output_shape == std::vector<int64_t>{1, 8400}));
 
   const auto gather_nd =
-      rvnpu::ValidateGatherNdShape({8400}, {64, 1}, 0, sizeof(int64_t));
+      dayan::ValidateGatherNdShape({8400}, {64, 1}, 0, sizeof(int64_t));
   assert(gather_nd.rows == 64 && gather_nd.index_depth == 1 &&
          gather_nd.data_elements == 8400 && gather_nd.output_elements == 64);
 
   rejected = false;
   try {
-    static_cast<void>(rvnpu::ValidateMaxPoolShape(
+    static_cast<void>(dayan::ValidateMaxPoolShape(
         {1, 16, 32, 32}, pool_attributes, 2));
   } catch (const std::invalid_argument &) {
     rejected = true;

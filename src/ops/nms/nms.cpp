@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -45,7 +45,7 @@ T ScalarInput(const Ort::KernelContext &context, size_t index,
     return default_value;
   const auto info = value.GetTensorTypeAndShapeInfo();
   if (info.GetElementType() != expected_type || info.GetElementCount() != 1)
-    throw std::invalid_argument("RVNPU NMS scalar input has invalid type");
+    throw std::invalid_argument("Dayan NMS scalar input has invalid type");
   return *value.GetTensorData<T>();
 }
 
@@ -57,7 +57,7 @@ NmsAttributes ReadNmsAttributes(const Ort::ConstNode &node) {
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(
+DAYAN_DEFINE_KERNEL(
     NonMaxSuppression, kOnnxDomain, 11,
     (Ort::KernelDefBuilder()),
     NonMaxSuppressionKernel)
@@ -74,20 +74,20 @@ NonMaxSuppressionKernel::NonMaxSuppressionKernel(const OrtKernelInfo *info,
 OrtStatus *NonMaxSuppressionKernel::Create(const OrtKernelInfo *info,
                                            void *state,
                                            OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr) {
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU NMS has no DeviceContext");
+                                      "Dayan NMS has no DeviceContext");
   }
   output =
       new NonMaxSuppressionKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL NonMaxSuppressionKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<NonMaxSuppressionKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue boxes = kernel_context.GetInput(0);
@@ -96,7 +96,7 @@ OrtStatus *ORT_API_CALL NonMaxSuppressionKernel::ComputeImpl(
   const auto scores_info = scores.GetTensorTypeAndShapeInfo();
   if (boxes_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
       scores_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    throw std::invalid_argument("RVNPU NMS requires FP32 boxes and scores");
+    throw std::invalid_argument("Dayan NMS requires FP32 boxes and scores");
   }
   const int64_t max_output = ScalarInput<int64_t>(
       kernel_context, 2, 0, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
@@ -118,7 +118,7 @@ OrtStatus *ORT_API_CALL NonMaxSuppressionKernel::ComputeImpl(
               output.GetTensorMutableData<int64_t>());
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL
@@ -126,4 +126,4 @@ NonMaxSuppressionKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<NonMaxSuppressionKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

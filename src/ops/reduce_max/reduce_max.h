@@ -3,7 +3,7 @@
 #include "plugin/kernel_registry.h"
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
 struct ReduceMaxAttributes {
   std::vector<int64_t> axes;
@@ -26,4 +26,4 @@ private:
   DeviceContext *context_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

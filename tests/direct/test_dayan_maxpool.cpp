@@ -105,7 +105,7 @@ float Compare(const std::vector<float> &actual,
 
 void ReferenceMaxPool(const std::vector<float> &input,
                       std::vector<float> &output,
-                      const rvnpu::MaxPoolShape &shape) {
+                      const dayan::MaxPoolShape &shape) {
   for (int32_t n = 0; n < shape.batch; ++n) {
     for (int32_t c = 0; c < shape.channels; ++c) {
       for (int32_t oh = 0; oh < shape.output_h; ++oh) {
@@ -144,18 +144,18 @@ void ReferenceMaxPool(const std::vector<float> &input,
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    rvnpu::DeviceContext context(options.kernel_elf);
+    dayan::DeviceContext context(options.kernel_elf);
     std::vector<float> input(Elements(options.input_shape));
     for (size_t index = 0; index < input.size(); ++index)
       input[index] = Value(index, 1, options.fractional_input);
 
-    rvnpu::MaxPoolAttributes attributes;
+    dayan::MaxPoolAttributes attributes;
     attributes.kernel_shape = options.kernel;
     attributes.strides = options.stride;
     attributes.pads = {options.pad[0], options.pad[1], options.pad[0],
                        options.pad[1]};
     const auto shape =
-        rvnpu::ValidateMaxPoolShape(options.input_shape, attributes);
+        dayan::ValidateMaxPoolShape(options.input_shape, attributes);
     std::vector<float> output(shape.output_elements);
     std::vector<float> reference(shape.output_elements);
     ReferenceMaxPool(input, reference, shape);

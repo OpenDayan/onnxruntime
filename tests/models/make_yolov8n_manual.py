@@ -9,7 +9,7 @@ from onnx import TensorProto, helper, numpy_helper, shape_inference
 
 RAW_SHAPE = [1, 84, 8400]
 OUTPUT_SHAPE = [1, 300, 6]
-PREFIX = "rvnpu_manual_"
+PREFIX = "dayan_manual_"
 
 
 def value_shapes(model: onnx.ModelProto) -> dict[str, list[int]]:

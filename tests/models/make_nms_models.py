@@ -35,7 +35,7 @@ def make_case(directory: Path, center_point_box: int, constant_node: bool = Fals
         "NonMaxSuppression",
         ["boxes", "scores", "max_output", "iou_threshold", "score_threshold"],
         ["selected_indices"],
-        name="rvnpu_test_nms",
+        name="dayan_test_nms",
         center_point_box=center_point_box,
     )
     nodes = [nms]
@@ -57,7 +57,7 @@ def make_case(directory: Path, center_point_box: int, constant_node: bool = Fals
         initializers.append(numpy_helper.from_array(max_output, "max_output"))
     graph = helper.make_graph(
         nodes,
-        "rvnpu_nms_test",
+        "dayan_nms_test",
         [
             helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [1, 4, 4]),
             helper.make_tensor_value_info("scores", TensorProto.FLOAT, [1, 2, 4]),
@@ -111,7 +111,7 @@ def make_topk_pipeline(directory: Path) -> None:
     nodes = [
         helper.make_node(
             "TopK", ["scores", "k"], ["top_scores", "top_indices"],
-            name="rvnpu_topk", axis=-1, largest=1, sorted=1
+            name="dayan_topk", axis=-1, largest=1, sorted=1
         ),
         helper.make_node(
             "Gather", ["boxes", "top_indices"], ["gathered_boxes"],
@@ -129,13 +129,13 @@ def make_topk_pipeline(directory: Path) -> None:
             "NonMaxSuppression",
             ["nms_boxes", "nms_scores", "max_output", "iou_threshold", "score_threshold"],
             ["selected_indices"],
-            name="rvnpu_nms",
+            name="dayan_nms",
             center_point_box=0,
         ),
     ]
     graph = helper.make_graph(
         nodes,
-        "rvnpu_topk_nms_test",
+        "dayan_topk_nms_test",
         [
             helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [1, 8, 4]),
             helper.make_tensor_value_info("scores", TensorProto.FLOAT, [1, 8]),
@@ -228,7 +228,7 @@ def make_yolo_postprocess(directory: Path) -> None:
     ]
     graph = helper.make_graph(
         nodes,
-        "rvnpu_yolo_postprocess_test",
+        "dayan_yolo_postprocess_test",
         [helper.make_tensor_value_info("raw_output", TensorProto.FLOAT, [1, 84, num_boxes])],
         [
             helper.make_tensor_value_info("selected_boxes", TensorProto.FLOAT, [None, 4]),

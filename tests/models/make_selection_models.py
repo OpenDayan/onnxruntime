@@ -32,13 +32,13 @@ def make_argmax(root: Path) -> None:
                 "ArgMax",
                 ["input"],
                 ["output"],
-                name="rvnpu_test_argmax",
+                name="dayan_test_argmax",
                 axis=-1,
                 keepdims=0,
                 select_last_index=0,
             )
         ],
-        "rvnpu_argmax_test",
+        "dayan_argmax_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, [2, 4])],
         [helper.make_tensor_value_info("output", TensorProto.INT64, [2])],
     )
@@ -56,11 +56,11 @@ def make_gather_nd(root: Path) -> None:
                 "GatherND",
                 ["data", "indices"],
                 ["output"],
-                name="rvnpu_test_gather_nd_int64",
+                name="dayan_test_gather_nd_int64",
                 batch_dims=0,
             )
         ],
-        "rvnpu_gather_nd_int64_test",
+        "dayan_gather_nd_int64_test",
         [
             helper.make_tensor_value_info("data", TensorProto.INT64, [8]),
             helper.make_tensor_value_info("indices", TensorProto.INT64, [4, 1]),
@@ -81,11 +81,11 @@ def make_transpose_int64(root: Path) -> None:
                 "Transpose",
                 ["data"],
                 ["output"],
-                name="rvnpu_test_transpose_int64",
+                name="dayan_test_transpose_int64",
                 perm=[1, 0],
             )
         ],
-        "rvnpu_transpose_int64_test",
+        "dayan_transpose_int64_test",
         [helper.make_tensor_value_info("data", TensorProto.INT64, [3, 2])],
         [helper.make_tensor_value_info("output", TensorProto.INT64, [2, 3])],
     )
@@ -102,11 +102,11 @@ def make_transpose_int64_vector(root: Path) -> None:
                 "Transpose",
                 ["data"],
                 ["output"],
-                name="rvnpu_test_transpose_int64_vector",
+                name="dayan_test_transpose_int64_vector",
                 perm=[1, 0],
             )
         ],
-        "rvnpu_transpose_int64_vector_test",
+        "dayan_transpose_int64_vector_test",
         [helper.make_tensor_value_info("data", TensorProto.INT64, [1, 45])],
         [helper.make_tensor_value_info("output", TensorProto.INT64, [45, 1])],
     )
@@ -129,10 +129,10 @@ def make_slice_int64(root: Path) -> None:
                 "Slice",
                 ["data", "starts", "ends", "axes", "steps"],
                 ["output"],
-                name="rvnpu_test_slice_int64",
+                name="dayan_test_slice_int64",
             )
         ],
-        "rvnpu_slice_int64_test",
+        "dayan_slice_int64_test",
         [helper.make_tensor_value_info("data", TensorProto.INT64, [6, 2])],
         [helper.make_tensor_value_info("output", TensorProto.INT64, [4, 2])],
         initializers,
@@ -158,10 +158,10 @@ def make_slice_int64_reverse(root: Path) -> None:
                 "Slice",
                 ["data", "starts", "ends", "axes", "steps"],
                 ["output"],
-                name="rvnpu_test_slice_int64_reverse",
+                name="dayan_test_slice_int64_reverse",
             )
         ],
-        "rvnpu_slice_int64_reverse_test",
+        "dayan_slice_int64_reverse_test",
         [helper.make_tensor_value_info("data", TensorProto.INT64, [5, 2])],
         [helper.make_tensor_value_info("output", TensorProto.INT64, [5, 2])],
         initializers,
@@ -265,7 +265,7 @@ def make_empty_postprocess(root: Path) -> None:
     ]
     graph = helper.make_graph(
         nodes,
-        "rvnpu_empty_postprocess_test",
+        "dayan_empty_postprocess_test",
         [
             helper.make_tensor_value_info("scores", TensorProto.FLOAT, [8]),
             helper.make_tensor_value_info("threshold", TensorProto.FLOAT, []),

@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 std::string NodeString(const Ort::ConstNode &node, const char *name,
@@ -50,7 +50,7 @@ bool IsSupportedResizeAttributes(const ResizeAttributes &attributes) {
          attributes.mode == "nearest" && attributes.nearest_mode == "floor";
 }
 
-RVNPU_DEFINE_KERNEL(Resize, kOnnxDomain, 13,
+DAYAN_DEFINE_KERNEL(Resize, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T1", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     ResizeKernel)
@@ -65,40 +65,40 @@ ResizeKernel::ResizeKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *ResizeKernel::Create(const OrtKernelInfo *info, void *state,
                                 OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU Resize has no DeviceContext");
+                                      "Dayan Resize has no DeviceContext");
   output = new ResizeKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL ResizeKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<ResizeKernel *>(kernel);
   if (!IsSupportedResizeAttributes(self.attributes_))
     throw std::invalid_argument(
-        "RVNPU Resize requires nearest/asymmetric/floor");
+        "Dayan Resize requires nearest/asymmetric/floor");
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
   const auto input_info = input.GetTensorTypeAndShapeInfo();
   if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
       kernel_context.GetInputCount() < 3)
-    throw std::invalid_argument("RVNPU Resize requires FP32 input and scales");
+    throw std::invalid_argument("Dayan Resize requires FP32 input and scales");
   const Ort::ConstValue scales = kernel_context.GetInput(2);
   if (scales == nullptr)
-    throw std::invalid_argument("RVNPU Resize requires scales");
+    throw std::invalid_argument("Dayan Resize requires scales");
   const auto scale_info = scales.GetTensorTypeAndShapeInfo();
   if (scale_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
       scale_info.GetElementCount() != 4)
     throw std::invalid_argument(
-        "RVNPU Resize scales must contain four FP32 values");
+        "Dayan Resize scales must contain four FP32 values");
   const float *scale = scales.GetTensorData<float>();
   const auto input_shape = input_info.GetShape();
   if (input_shape.size() != 4 || scale[0] != 1.0f || scale[1] != 1.0f)
-    throw std::invalid_argument("RVNPU Resize only changes H/W");
+    throw std::invalid_argument("Dayan Resize only changes H/W");
   std::vector<int64_t> output_shape = input_shape;
   output_shape[2] = static_cast<int64_t>(std::floor(input_shape[2] * scale[2]));
   output_shape[3] = static_cast<int64_t>(std::floor(input_shape[3] * scale[3]));
@@ -107,11 +107,11 @@ OrtStatus *ORT_API_CALL ResizeKernel::ComputeImpl(
   self.context_->RunResize(input.GetTensorData<float>(),
                            output.GetTensorMutableData<float>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL ResizeKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<ResizeKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

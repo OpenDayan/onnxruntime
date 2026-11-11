@@ -23,7 +23,7 @@ def make_resize(directory: Path) -> None:
         [helper.make_node("Resize", ["input", "", "scales"], ["output"],
                           mode="nearest", coordinate_transformation_mode="asymmetric",
                           nearest_mode="floor")],
-        "rvnpu_resize_test",
+        "dayan_resize_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
         [scales],
@@ -35,7 +35,7 @@ def make_transpose(directory: Path) -> None:
     input_shape, output_shape = [1, 84, 32], [1, 32, 84]
     graph = helper.make_graph(
         [helper.make_node("Transpose", ["input"], ["output"], perm=[0, 2, 1])],
-        "rvnpu_transpose_test",
+        "dayan_transpose_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
     )
@@ -46,7 +46,7 @@ def make_reduce_max(directory: Path) -> None:
     input_shape, output_shape = [1, 32, 80], [1, 32]
     graph = helper.make_graph(
         [helper.make_node("ReduceMax", ["input"], ["output"], axes=[-1], keepdims=0)],
-        "rvnpu_reduce_max_test",
+        "dayan_reduce_max_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
     )
@@ -58,7 +58,7 @@ def make_softmax(directory: Path) -> None:
     shape = [1, 16, 2, 16]
     graph = helper.make_graph(
         [helper.make_node("Softmax", ["input"], ["output"], axis=1)],
-        "rvnpu_softmax_test",
+        "dayan_softmax_test",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, shape)],
         [helper.make_tensor_value_info("output", TensorProto.FLOAT, shape)],
     )

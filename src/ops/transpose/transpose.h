@@ -5,7 +5,7 @@
 #include "plugin/kernel_registry.h"
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
 std::vector<int64_t> ReadTransposePerm(const Ort::ConstNode &node);
 
@@ -23,4 +23,4 @@ private:
   DeviceContext *context_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

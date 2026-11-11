@@ -5,7 +5,7 @@
 
 #include "npu_runtime.h"
 
-namespace rvnpu {
+namespace dayan {
 
 class DayanDeviceBuffer final {
 public:
@@ -25,4 +25,4 @@ private:
   size_t size_ = 0;
 };
 
-} // namespace rvnpu
+} // namespace dayan

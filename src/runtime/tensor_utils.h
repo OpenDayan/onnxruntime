@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 
 struct MatMulShape {
   int32_t m;
@@ -328,7 +328,7 @@ inline ConcatShape
 ValidateConcatShapes(const std::vector<std::vector<int64_t>> &inputs,
                      int64_t axis) {
   if (inputs.size() < 2 || inputs[0].empty() || inputs[0].size() > 4)
-    throw std::invalid_argument("RVNPU Concat requires 2 or more rank-1..4 inputs");
+    throw std::invalid_argument("Dayan Concat requires 2 or more rank-1..4 inputs");
   const size_t rank = inputs[0].size();
   const size_t normalized_axis = NormalizeAxis(axis, rank, "Concat");
   ConcatShape result;
@@ -336,12 +336,12 @@ ValidateConcatShapes(const std::vector<std::vector<int64_t>> &inputs,
   result.output_shape[normalized_axis] = 0;
   for (const auto &input : inputs) {
     if (input.size() != rank)
-      throw std::invalid_argument("RVNPU Concat input ranks do not match");
+      throw std::invalid_argument("Dayan Concat input ranks do not match");
     for (size_t dimension = 0; dimension < rank; ++dimension) {
       CheckedNonNegativeDimension(input[dimension], "Concat");
       if (dimension != normalized_axis &&
           input[dimension] != inputs[0][dimension]) {
-        throw std::invalid_argument("RVNPU Concat non-axis dimensions differ");
+        throw std::invalid_argument("Dayan Concat non-axis dimensions differ");
       }
     }
     result.input_axes.push_back(
@@ -367,7 +367,7 @@ inline SplitShape ValidateSplitShape(const std::vector<int64_t> &input,
                                      int64_t axis, size_t output_count) {
   if (input.empty() || input.size() > 4 || output_count < 2 ||
       splits.size() != output_count) {
-    throw std::invalid_argument("RVNPU Split requires rank-1..4 and explicit splits");
+    throw std::invalid_argument("Dayan Split requires rank-1..4 and explicit splits");
   }
   const size_t normalized_axis = NormalizeAxis(axis, input.size(), "Split");
   const int32_t input_axis = CheckedDimension(input[normalized_axis], "Split axis");
@@ -382,7 +382,7 @@ inline SplitShape ValidateSplitShape(const std::vector<int64_t> &input,
     result.output_shapes.push_back(std::move(output));
   }
   if (total != input_axis)
-    throw std::invalid_argument("RVNPU Split sizes do not cover the axis");
+    throw std::invalid_argument("Dayan Split sizes do not cover the axis");
   result.outer = CheckedSizeDimension(
       ShapeProduct(input, 0, normalized_axis, "Split outer"), "Split outer");
   result.inner = CheckedSizeDimension(
@@ -398,7 +398,7 @@ inline SliceShape ValidateSliceShape(const std::vector<int64_t> &input,
                                      int64_t step) {
   if (input.empty() || input.size() > 4 || (step != 1 && step != -1))
     throw std::invalid_argument(
-        "RVNPU Slice requires rank-1..4 and step=1 or -1");
+        "Dayan Slice requires rank-1..4 and step=1 or -1");
   const size_t normalized_axis = NormalizeAxis(axis, input.size(), "Slice");
   const int64_t dimension =
       CheckedNonNegativeDimension(input[normalized_axis], "Slice axis");
@@ -449,7 +449,7 @@ ValidateResizeShape(const std::vector<int64_t> &input,
                     const std::vector<int64_t> &output) {
   if (input.size() != 4 || output.size() != 4 || input[0] != output[0] ||
       input[1] != output[1])
-    throw std::invalid_argument("RVNPU Resize requires NCHW with unchanged N/C");
+    throw std::invalid_argument("Dayan Resize requires NCHW with unchanged N/C");
   ResizeShape result;
   result.output_shape = output;
   result.batch = CheckedDimension(input[0], "Resize N");
@@ -461,7 +461,7 @@ ValidateResizeShape(const std::vector<int64_t> &input,
   if (result.output_h < result.input_h || result.output_w < result.input_w ||
       result.output_h % result.input_h != 0 ||
       result.output_w % result.input_w != 0)
-    throw std::invalid_argument("RVNPU Resize requires integer upscaling");
+    throw std::invalid_argument("Dayan Resize requires integer upscaling");
   result.input_elements = ShapeProduct(input, 0, input.size(), "Resize input");
   result.output_elements =
       ShapeProduct(output, 0, output.size(), "Resize output");
@@ -490,7 +490,7 @@ inline TransposeShape ValidateTransposeShape(
       input.size() == 4 && perm == std::vector<int64_t>({0, 2, 1, 3});
   if (!rank2 && !rank3 && !rank4)
     throw std::invalid_argument(
-        "RVNPU Transpose requires rank-2 perm [1,0], rank-3 tiled [N,C,K] with C<=128 and K divisible by 16, rank-3 degenerate K=1 within bounds, or rank-4 perm [0,2,1,3]");
+        "Dayan Transpose requires rank-2 perm [1,0], rank-3 tiled [N,C,K] with C<=128 and K divisible by 16, rank-3 degenerate K=1 within bounds, or rank-4 perm [0,2,1,3]");
   TransposeShape result;
   result.rank = static_cast<int32_t>(input.size());
   if (rank2) {
@@ -520,11 +520,11 @@ inline ReduceMaxShape ValidateReduceMaxShape(
       NormalizeAxis(axes[0], input.size(), "ReduceMax") + 1 != input.size() ||
       (keepdims != 0 && keepdims != 1)) {
     throw std::invalid_argument(
-        "RVNPU ReduceMax requires static rank 1-4, one last axis and keepdims 0 or 1");
+        "Dayan ReduceMax requires static rank 1-4, one last axis and keepdims 0 or 1");
   }
   if (std::any_of(input.begin(), input.end(),
                   [](int64_t dimension) { return dimension <= 0; })) {
-    throw std::invalid_argument("RVNPU ReduceMax requires static dimensions");
+    throw std::invalid_argument("Dayan ReduceMax requires static dimensions");
   }
   ReduceMaxShape result;
   result.columns = CheckedDimension(input.back(), "ReduceMax columns");
@@ -550,11 +550,11 @@ inline ArgMaxShape ValidateArgMaxShape(
       (attributes.keepdims != 0 && attributes.keepdims != 1) ||
       attributes.select_last_index != 0) {
     throw std::invalid_argument(
-        "RVNPU ArgMax requires static rank 1-4, last axis, keepdims 0 or 1 and select_last_index=0");
+        "Dayan ArgMax requires static rank 1-4, last axis, keepdims 0 or 1 and select_last_index=0");
   }
   if (std::any_of(input.begin(), input.end(),
                   [](int64_t dimension) { return dimension <= 0; })) {
-    throw std::invalid_argument("RVNPU ArgMax requires static dimensions");
+    throw std::invalid_argument("Dayan ArgMax requires static dimensions");
   }
   ArgMaxShape result;
   result.columns = CheckedDimension(input.back(), "ArgMax columns");
@@ -578,7 +578,7 @@ inline SoftmaxShape ValidateSoftmaxAxis1Shape(
   if (input.size() != 4 || NormalizeAxis(axis, input.size(), "Softmax") != 1 ||
       input[1] != 16)
     throw std::invalid_argument(
-        "RVNPU Softmax requires rank-4, axis=1 and dimension 16");
+        "Dayan Softmax requires rank-4, axis=1 and dimension 16");
   SoftmaxShape result;
   result.output_shape = input;
   result.outer = CheckedDimension(input[0], "Softmax outer");
@@ -593,14 +593,14 @@ inline SoftmaxShape ValidateSoftmaxAxis1Shape(
 inline MatMulShape ValidateMatMulShapes(const std::vector<int64_t> &a,
                                         const std::vector<int64_t> &b) {
   if (a.size() != 2 || b.size() != 2) {
-    throw std::invalid_argument("RVNPU MatMul requires rank-2 inputs");
+    throw std::invalid_argument("Dayan MatMul requires rank-2 inputs");
   }
   const int32_t m = CheckedDimension(a[0], "M");
   const int32_t k = CheckedDimension(a[1], "K");
   const int32_t b_k = CheckedDimension(b[0], "B.K");
   const int32_t n = CheckedDimension(b[1], "N");
   if (k != b_k) {
-    throw std::invalid_argument("RVNPU MatMul K dimensions do not match");
+    throw std::invalid_argument("Dayan MatMul K dimensions do not match");
   }
   const size_t a_elements =
       CheckedMultiply(static_cast<size_t>(m), static_cast<size_t>(k), "A");
@@ -706,7 +706,7 @@ inline ConvShape ValidateConvShapes(
     const std::vector<int64_t> *bias,
     const ConvAttributes &attributes) {
   if (input.size() != 4 || weight.size() != 4) {
-    throw std::invalid_argument("RVNPU Conv requires rank-4 NCHW tensors");
+    throw std::invalid_argument("Dayan Conv requires rank-4 NCHW tensors");
   }
   ValidateConvAttributeValues(attributes);
   const int32_t batch = CheckedDimension(input[0], "Conv batch");
@@ -731,7 +731,7 @@ inline ConvShape ValidateConvShapes(
   if (!attributes.kernel_shape.empty() &&
       attributes.kernel_shape !=
           std::vector<int64_t>{kernel_h, kernel_w}) {
-    throw ConvModelError("RVNPU Conv kernel_shape does not match W");
+    throw ConvModelError("Dayan Conv kernel_shape does not match W");
   }
 
   const int32_t stride_h =
@@ -781,7 +781,7 @@ inline ConvShape ValidateConvShapes(
 
   if (bias != nullptr &&
       (bias->size() != 1 || (*bias)[0] != output_channels)) {
-    throw ConvModelError("RVNPU Conv bias must have shape [M]");
+    throw ConvModelError("Dayan Conv bias must have shape [M]");
   }
 
   ConvShape result;
@@ -835,11 +835,11 @@ inline MaxPoolShape ValidateMaxPoolShape(
     const std::vector<int64_t> &input,
     const MaxPoolAttributes &attributes, size_t output_count = 1) {
   if (input.size() != 4) {
-    throw std::invalid_argument("RVNPU MaxPool requires rank-4 NCHW input");
+    throw std::invalid_argument("Dayan MaxPool requires rank-4 NCHW input");
   }
   if (output_count != 1 || attributes.auto_pad != "NOTSET" ||
       attributes.ceil_mode != 0 || attributes.storage_order != 0) {
-    throw std::invalid_argument("RVNPU MaxPool configuration is unsupported");
+    throw std::invalid_argument("Dayan MaxPool configuration is unsupported");
   }
   ValidateSpatialVector(attributes.kernel_shape, 2, "MaxPool kernel_shape");
   ValidateSpatialVector(attributes.dilations, 2, "MaxPool dilations");
@@ -856,7 +856,7 @@ inline MaxPoolShape ValidateMaxPoolShape(
       (attributes.strides[1] != 1 && attributes.strides[1] != 2) ||
       attributes.pads[0] != attributes.pads[2] ||
       attributes.pads[1] != attributes.pads[3]) {
-    throw std::invalid_argument("RVNPU MaxPool attributes are unsupported");
+    throw std::invalid_argument("Dayan MaxPool attributes are unsupported");
   }
 
   MaxPoolShape result;
@@ -907,14 +907,14 @@ inline TopKShape ValidateTopKShape(const std::vector<int64_t> &input,
           input.size() ||
       attributes.largest != 1 || attributes.sorted != 1) {
     throw std::invalid_argument(
-        "RVNPU TopK requires static rank 1-4, last axis, largest=1 and sorted=1");
+        "Dayan TopK requires static rank 1-4, last axis, largest=1 and sorted=1");
   }
   TopKShape result;
   result.rows = CheckedSizeDimension(
       ShapeProduct(input, 0, input.size() - 1, "TopK rows"), "TopK rows");
   result.columns = CheckedDimension(input.back(), "TopK columns");
   if (k <= 0 || k > result.columns || k > 300) {
-    throw std::invalid_argument("RVNPU TopK requires K in [1, min(N, 300)]");
+    throw std::invalid_argument("Dayan TopK requires K in [1, min(N, 300)]");
   }
   result.k = static_cast<int32_t>(k);
   result.output_shape = input;
@@ -940,7 +940,7 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
       (attributes.center_point_box != 0 &&
        attributes.center_point_box != 1)) {
     throw std::invalid_argument(
-        "RVNPU NMS requires boxes [1,N,4], scores [1,C,N] and center_point_box 0 or 1");
+        "Dayan NMS requires boxes [1,N,4], scores [1,C,N] and center_point_box 0 or 1");
   }
   NmsShape result;
   result.center_point_box = static_cast<int32_t>(attributes.center_point_box);
@@ -951,7 +951,7 @@ inline NmsShape ValidateNmsShapes(const std::vector<int64_t> &boxes,
       CheckedNonNegativeDimension(scores[2], "NMS score num_boxes");
   if (score_boxes != result.num_boxes || max_output_per_class <= 0) {
     throw std::invalid_argument(
-        "RVNPU NMS requires matching boxes and a positive max output");
+        "Dayan NMS requires matching boxes and a positive max output");
   }
   result.max_output_per_class = static_cast<int32_t>(
       std::min<int64_t>(max_output_per_class, result.num_boxes));
@@ -978,7 +978,7 @@ ValidateGatherNdShape(const std::vector<int64_t> &data,
       indices.size() != 2 || indices[1] <= 0 ||
       indices[1] > static_cast<int64_t>(data.size()) || indices[0] < 0) {
     throw std::invalid_argument(
-        "RVNPU GatherND requires rank 1-3 data, INT64 [K,D] indices and batch_dims=0");
+        "Dayan GatherND requires rank 1-3 data, INT64 [K,D] indices and batch_dims=0");
   }
 
   GatherNdShape result;
@@ -1016,4 +1016,4 @@ ValidateGatherNdShape(const std::vector<int64_t> &data,
   return result;
 }
 
-} // namespace rvnpu
+} // namespace dayan

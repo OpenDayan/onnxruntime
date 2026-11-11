@@ -23,7 +23,7 @@
 #include "plugin/kernel_registry.h"
 #include "runtime/tensor_utils.h"
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -84,7 +84,7 @@ private:
   static OrtStatus *ORT_API_CALL
   CreateStateImpl(OrtNodeComputeInfo *compute_info, OrtNodeComputeContext *,
                   void **compute_state) noexcept {
-    RVNPU_EXCEPTION_GUARD_BEGIN
+    DAYAN_EXCEPTION_GUARD_BEGIN
     if (compute_state == nullptr) {
       return Ort::GetApi().CreateStatus(ORT_INVALID_ARGUMENT,
                                         "SiLU compute state is null");
@@ -92,13 +92,13 @@ private:
     const auto &self = *static_cast<SiluNodeComputeInfo *>(compute_info);
     *compute_state = new DeviceContextPtr(self.context_);
     return nullptr;
-    RVNPU_EXCEPTION_GUARD_END
+    DAYAN_EXCEPTION_GUARD_END
   }
 
   static OrtStatus *ORT_API_CALL ComputeImpl(
       OrtNodeComputeInfo *, void *compute_state,
       OrtKernelContext *kernel_context) noexcept {
-    RVNPU_EXCEPTION_GUARD_BEGIN
+    DAYAN_EXCEPTION_GUARD_BEGIN
     if (compute_state == nullptr) {
       return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
                                         "SiLU compute state is missing");
@@ -108,7 +108,7 @@ private:
     const Ort::ConstValue input = ort_context.GetInput(0);
     const auto info = input.GetTensorTypeAndShapeInfo();
     if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-      throw std::invalid_argument("RVNPU fused SiLU requires FP32 input");
+      throw std::invalid_argument("Dayan fused SiLU requires FP32 input");
     }
     const auto shape =
         ValidateUnaryTensorShape(info.GetShape(), "fused SiLU");
@@ -117,7 +117,7 @@ private:
     context.RunSilu(input.GetTensorData<float>(),
                     output.GetTensorMutableData<float>(), shape);
     return nullptr;
-    RVNPU_EXCEPTION_GUARD_END
+    DAYAN_EXCEPTION_GUARD_END
   }
 
   static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo *,
@@ -130,7 +130,7 @@ private:
 
 } // namespace
 
-RvnpuEp::RvnpuEp(RvnpuEpFactory &factory, Config config,
+DayanEp::DayanEp(DayanEpFactory &factory, Config config,
                  const OrtLogger &logger)
     : OrtEp{}, factory_(factory), api_(factory.api()),
       ep_api_(factory.ep_api()), name_(factory.name()),
@@ -145,28 +145,28 @@ RvnpuEp::RvnpuEp(RvnpuEpFactory &factory, Config config,
   CreateProfiler = nullptr;
   Ort::ThrowOnError(CreateKernelRegistry(name_.c_str(), device_context_.get(),
                                          &kernel_registry_));
-  RVNPU_IGNORE_STATUS(api_.Logger_LogMessage(&logger_, ORT_LOGGING_LEVEL_INFO,
-                                             "RVNPUExecutionProvider created",
+  DAYAN_IGNORE_STATUS(api_.Logger_LogMessage(&logger_, ORT_LOGGING_LEVEL_INFO,
+                                             "DayanExecutionProvider created",
                                              __FILE__, __LINE__, __FUNCTION__));
 }
 
-RvnpuEp::~RvnpuEp() {
+DayanEp::~DayanEp() {
   if (kernel_registry_ != nullptr) {
     ep_api_.ReleaseKernelRegistry(kernel_registry_);
   }
 }
 
-const char *ORT_API_CALL RvnpuEp::GetNameImpl(const OrtEp *ep) noexcept {
-  return static_cast<const RvnpuEp *>(ep)->name_.c_str();
+const char *ORT_API_CALL DayanEp::GetNameImpl(const OrtEp *ep) noexcept {
+  return static_cast<const DayanEp *>(ep)->name_.c_str();
 }
 
-bool RvnpuEp::IsOperatorEnabled(const std::string &operator_type) const {
+bool DayanEp::IsOperatorEnabled(const std::string &operator_type) const {
   return config_.disabled_ops.count(operator_type) == 0 &&
          (config_.enabled_ops.empty() ||
           config_.enabled_ops.count(operator_type) != 0);
 }
 
-bool RvnpuEp::SupportsMatMul(const Ort::ConstNode &node) {
+bool DayanEp::SupportsMatMul(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "MatMul" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -193,7 +193,7 @@ bool RvnpuEp::SupportsMatMul(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsBinaryElementwise(const Ort::ConstNode &node,
+bool DayanEp::SupportsBinaryElementwise(const Ort::ConstNode &node,
                                         const char *operator_type) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != operator_type ||
@@ -233,7 +233,7 @@ bool RvnpuEp::SupportsBinaryElementwise(const Ort::ConstNode &node,
   }
 }
 
-bool RvnpuEp::SupportsConcat(const Ort::ConstNode &node) {
+bool DayanEp::SupportsConcat(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Concat" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -284,7 +284,7 @@ bool RvnpuEp::SupportsConcat(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsSplit(const Ort::ConstNode &node) {
+bool DayanEp::SupportsSplit(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Split" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -308,7 +308,7 @@ bool RvnpuEp::SupportsSplit(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsSlice(const Ort::ConstNode &node) {
+bool DayanEp::SupportsSlice(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Slice" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -345,7 +345,7 @@ bool RvnpuEp::SupportsSlice(const Ort::ConstNode &node) {
   return true;
 }
 
-bool RvnpuEp::SupportsResize(const Ort::ConstNode &node) {
+bool DayanEp::SupportsResize(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Resize" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -369,7 +369,7 @@ bool RvnpuEp::SupportsResize(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsTranspose(const Ort::ConstNode &node) {
+bool DayanEp::SupportsTranspose(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Transpose" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -415,7 +415,7 @@ bool RvnpuEp::SupportsTranspose(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsSoftmax(const Ort::ConstNode &node) {
+bool DayanEp::SupportsSoftmax(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Softmax" ||
       !(domain.empty() || domain == "ai.onnx") || node.GetSinceVersion() != 13)
@@ -441,7 +441,7 @@ bool RvnpuEp::SupportsSoftmax(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsReduceMax(const Ort::ConstNode &node) {
+bool DayanEp::SupportsReduceMax(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "ReduceMax" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -463,7 +463,7 @@ bool RvnpuEp::SupportsReduceMax(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsArgMax(const Ort::ConstNode &node) {
+bool DayanEp::SupportsArgMax(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "ArgMax" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -486,7 +486,7 @@ bool RvnpuEp::SupportsArgMax(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsSigmoid(const Ort::ConstNode &node) {
+bool DayanEp::SupportsSigmoid(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Sigmoid" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -510,7 +510,7 @@ bool RvnpuEp::SupportsSigmoid(const Ort::ConstNode &node) {
 }
 
 std::optional<Ort::ConstNode>
-RvnpuEp::MatchSiluPattern(const Ort::ConstNode &mul) {
+DayanEp::MatchSiluPattern(const Ort::ConstNode &mul) {
   if (!SupportsBinaryElementwise(mul, "Mul"))
     return std::nullopt;
   const auto mul_inputs = mul.GetInputs();
@@ -542,7 +542,7 @@ RvnpuEp::MatchSiluPattern(const Ort::ConstNode &mul) {
   return std::nullopt;
 }
 
-bool RvnpuEp::SupportsConv(const Ort::ConstNode &node) {
+bool DayanEp::SupportsConv(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "Conv" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -576,7 +576,7 @@ bool RvnpuEp::SupportsConv(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsMaxPool(const Ort::ConstNode &node) {
+bool DayanEp::SupportsMaxPool(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "MaxPool" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -601,7 +601,7 @@ bool RvnpuEp::SupportsMaxPool(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsTopK(const Ort::ConstNode &node) {
+bool DayanEp::SupportsTopK(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "TopK" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -639,7 +639,7 @@ bool RvnpuEp::SupportsTopK(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsNms(const Ort::ConstNode &node) {
+bool DayanEp::SupportsNms(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "NonMaxSuppression" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -691,7 +691,7 @@ bool RvnpuEp::SupportsNms(const Ort::ConstNode &node) {
   }
 }
 
-bool RvnpuEp::SupportsGatherNd(const Ort::ConstNode &node) {
+bool DayanEp::SupportsGatherNd(const Ort::ConstNode &node) {
   const auto domain = node.GetDomain();
   if (node.GetOperatorType() != "GatherND" ||
       !(domain.empty() || domain == "ai.onnx") ||
@@ -734,10 +734,10 @@ bool RvnpuEp::SupportsGatherNd(const Ort::ConstNode &node) {
 }
 
 OrtStatus *ORT_API_CALL
-RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
+DayanEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
                            OrtEpGraphSupportInfo *support_info) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
-  auto &ep = *static_cast<RvnpuEp *>(ep_ptr);
+  DAYAN_EXCEPTION_GUARD_BEGIN
+  auto &ep = *static_cast<DayanEp *>(ep_ptr);
   Ort::ConstGraph graph{graph_ptr};
   const auto nodes = graph.GetNodes();
   std::unordered_set<size_t> fused_node_ids;
@@ -754,7 +754,7 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
       std::array<Ort::ConstNode, 2> fusion_nodes{*sigmoid, node};
       OrtNodeFusionOptions fusion_options{};
       fusion_options.ort_version_supported = ORT_API_VERSION;
-      RVNPU_RETURN_IF_ERROR(ep.ep_api_.EpGraphSupportInfo_AddNodesToFuse(
+      DAYAN_RETURN_IF_ERROR(ep.ep_api_.EpGraphSupportInfo_AddNodesToFuse(
           support_info,
           reinterpret_cast<const OrtNode *const *>(fusion_nodes.data()),
           fusion_nodes.size(), &fusion_options));
@@ -781,28 +781,28 @@ RvnpuEp::GetCapabilityImpl(OrtEp *ep_ptr, const OrtGraph *graph_ptr,
       continue;
     }
     const OrtKernelDef *definition = nullptr;
-    RVNPU_RETURN_IF_ERROR(ep.ep_api_.EpGraphSupportInfo_LookUpKernel(
+    DAYAN_RETURN_IF_ERROR(ep.ep_api_.EpGraphSupportInfo_LookUpKernel(
         support_info, node, &definition));
     if (definition != nullptr) {
-      RVNPU_RETURN_IF_ERROR(
+      DAYAN_RETURN_IF_ERROR(
           ep.ep_api_.EpGraphSupportInfo_AddSingleNode(support_info, node));
     }
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
-OrtStatus *ORT_API_CALL RvnpuEp::CompileImpl(
+OrtStatus *ORT_API_CALL DayanEp::CompileImpl(
     OrtEp *ep_ptr, const OrtGraph **graph_ptrs, const OrtNode **fused_nodes,
     size_t count, OrtNodeComputeInfo **node_compute_infos,
     OrtNode **ep_context_nodes) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (graph_ptrs == nullptr || fused_nodes == nullptr ||
       node_compute_infos == nullptr) {
     return Ort::GetApi().CreateStatus(ORT_INVALID_ARGUMENT,
-                                      "RVNPU Compile received null arrays");
+                                      "Dayan Compile received null arrays");
   }
-  auto &ep = *static_cast<RvnpuEp *>(ep_ptr);
+  auto &ep = *static_cast<DayanEp *>(ep_ptr);
   for (size_t index = 0; index < count; ++index) {
     Ort::ConstGraph graph{graph_ptrs[index]};
     const auto nodes = graph.GetNodes();
@@ -820,7 +820,7 @@ OrtStatus *ORT_API_CALL RvnpuEp::CompileImpl(
         fused_node.GetOutputs().size() != 1 ||
         fused_node.GetEpName() != ep.name_) {
       return Ort::GetApi().CreateStatus(
-          ORT_EP_FAIL, "RVNPU Compile expected a Sigmoid+Mul SiLU subgraph");
+          ORT_EP_FAIL, "Dayan Compile expected a Sigmoid+Mul SiLU subgraph");
     }
     node_compute_infos[index] =
         new SiluNodeComputeInfo(ep.device_context_);
@@ -828,10 +828,10 @@ OrtStatus *ORT_API_CALL RvnpuEp::CompileImpl(
       ep_context_nodes[index] = nullptr;
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
-void ORT_API_CALL RvnpuEp::ReleaseNodeComputeInfosImpl(
+void ORT_API_CALL DayanEp::ReleaseNodeComputeInfosImpl(
     OrtEp *, OrtNodeComputeInfo **node_compute_infos,
     size_t count) noexcept {
   if (node_compute_infos == nullptr)
@@ -840,10 +840,10 @@ void ORT_API_CALL RvnpuEp::ReleaseNodeComputeInfosImpl(
     delete static_cast<SiluNodeComputeInfo *>(node_compute_infos[index]);
 }
 
-OrtStatus *ORT_API_CALL RvnpuEp::GetKernelRegistryImpl(
+OrtStatus *ORT_API_CALL DayanEp::GetKernelRegistryImpl(
     OrtEp *ep_ptr, const OrtKernelRegistry **registry) noexcept {
-  *registry = static_cast<RvnpuEp *>(ep_ptr)->kernel_registry_;
+  *registry = static_cast<DayanEp *>(ep_ptr)->kernel_registry_;
   return nullptr;
 }
 
-} // namespace rvnpu
+} // namespace dayan

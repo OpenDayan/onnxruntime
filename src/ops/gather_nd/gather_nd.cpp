@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 int64_t KernelBatchDims(const OrtKernelInfo *info) {
@@ -24,11 +24,11 @@ int64_t ReadGatherNdBatchDims(const Ort::ConstNode &node) {
   int64_t result = 0;
   const Ort::Status read_status = attribute.GetValue<int64_t>(result);
   if (!read_status.IsOK())
-    throw std::invalid_argument("RVNPU GatherND batch_dims is invalid");
+    throw std::invalid_argument("Dayan GatherND batch_dims is invalid");
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(
+DAYAN_DEFINE_KERNEL(
     GatherND, kOnnxDomain, 13,
     (Ort::KernelDefBuilder().AddTypeConstraint(
         "T", std::vector<const OrtDataType *>{
@@ -46,18 +46,18 @@ GatherNdKernel::GatherNdKernel(const OrtKernelInfo *info,
 
 OrtStatus *GatherNdKernel::Create(const OrtKernelInfo *info, void *state,
                                   OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU GatherND has no DeviceContext");
+                                      "Dayan GatherND has no DeviceContext");
   output = new GatherNdKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL GatherNdKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<GatherNdKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue data = kernel_context.GetInput(0);
@@ -69,7 +69,7 @@ OrtStatus *ORT_API_CALL GatherNdKernel::ComputeImpl(
        data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) ||
       indices_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)
     throw std::invalid_argument(
-        "RVNPU GatherND requires FP32 or INT64 data and INT64 indices");
+        "Dayan GatherND requires FP32 or INT64 data and INT64 indices");
   const auto shape = ValidateGatherNdShape(
       data_info.GetShape(), indices_info.GetShape(), self.batch_dims_,
       data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ? sizeof(int64_t)
@@ -87,11 +87,11 @@ OrtStatus *ORT_API_CALL GatherNdKernel::ComputeImpl(
                                output.GetTensorMutableData<int64_t>(), shape);
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL GatherNdKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<GatherNdKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

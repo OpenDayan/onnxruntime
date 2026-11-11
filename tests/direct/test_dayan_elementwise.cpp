@@ -78,7 +78,7 @@ Options Parse(int argc, char **argv) {
 }
 
 size_t Elements(const std::vector<int64_t> &shape) {
-  return rvnpu::ValidateUnaryTensorShape(shape, "test").elements;
+  return dayan::ValidateUnaryTensorShape(shape, "test").elements;
 }
 
 float InputValue(size_t index, int salt) {
@@ -112,11 +112,11 @@ size_t BroadcastIndex(size_t output_index,
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    rvnpu::DeviceContext context(options.kernel_elf);
+    dayan::DeviceContext context(options.kernel_elf);
 
     if (options.op == "sigmoid" || options.op == "silu") {
       const auto shape =
-          rvnpu::ValidateUnaryTensorShape(options.shape, options.op.c_str());
+          dayan::ValidateUnaryTensorShape(options.shape, options.op.c_str());
       std::vector<float> input(shape.elements);
       std::vector<float> output(shape.elements);
       for (size_t index = 0; index < input.size(); ++index)
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
     std::vector<int64_t> rhs_shape = options.rhs_shape;
     if (options.swap_inputs)
       std::swap(lhs_shape, rhs_shape);
-    const auto shape = rvnpu::ValidateBinaryElementwiseShapes(
+    const auto shape = dayan::ValidateBinaryElementwiseShapes(
         lhs_shape, rhs_shape, options.op.c_str());
     std::vector<float> lhs(Elements(lhs_shape));
     std::vector<float> rhs(Elements(rhs_shape));

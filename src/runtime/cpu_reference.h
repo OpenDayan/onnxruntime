@@ -7,7 +7,7 @@
 
 #include "runtime/tensor_utils.h"
 
-namespace rvnpu {
+namespace dayan {
 
 // Test-only numerical reference. The ORT CPU EP still executes its normal
 // FP32 Conv; this helper is used to compare the NPU's reduced-precision path.
@@ -162,4 +162,4 @@ inline void MatMulBf16Reference(
   }
 }
 
-} // namespace rvnpu
+} // namespace dayan

@@ -14,8 +14,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 struct Options {
   std::string model;
@@ -123,27 +123,27 @@ float Compare(const std::vector<float> &actual,
 }
 
 void CheckAssignment(const Ort::Session &session) {
-  std::unordered_map<std::string, size_t> rvnpu_counts;
+  std::unordered_map<std::string, size_t> dayan_counts;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     const std::string ep_name = subgraph.GetEpName();
     for (const auto &node : subgraph.GetNodes()) {
       const std::string op = node.GetOperatorType();
       if (ep_name == kEpName) {
-        ++rvnpu_counts[op];
+        ++dayan_counts[op];
       }
       if ((op == "Conv" || op == "MaxPool" || op == "MatMul") &&
           ep_name != kEpName) {
-        throw std::runtime_error(op + " was not assigned to RVNPU EP");
+        throw std::runtime_error(op + " was not assigned to Dayan EP");
       }
       if (op != "Conv" && op != "MaxPool" && op != "MatMul" &&
           ep_name == kEpName) {
-        throw std::runtime_error("RVNPU EP claimed unsupported operator " + op);
+        throw std::runtime_error("Dayan EP claimed unsupported operator " + op);
       }
     }
   }
   for (const char *op : {"Conv", "MaxPool", "MatMul"}) {
-    if (rvnpu_counts[op] != 1)
-      throw std::runtime_error(std::string("assignment info has no RVNPU ") +
+    if (dayan_counts[op] != 1)
+      throw std::runtime_error(std::string("assignment info has no Dayan ") +
                                op);
   }
 }
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
     const auto options = Parse(argc, argv);
     std::vector<float> input =
         ReadFloats(std::filesystem::path(options.data_dir) / "input.bin", 100);
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-tiny-cnn");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-tiny-cnn");
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_DISABLE_ALL);
@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
         selected.push_back(device);
     }
     if (selected.size() != 1) {
-      throw std::runtime_error("expected exactly one RVNPU EP device, found " +
+      throw std::runtime_error("expected exactly one Dayan EP device, found " +
                                std::to_string(selected.size()));
     }
 
@@ -187,9 +187,9 @@ int main(int argc, char **argv) {
 
       const Outputs output = Run(session, input);
       const float difference =
-          Compare(output.output, cpu.output, 2e-2f, 2e-2f, "CPU/RVNPU");
-      Compare(output.flat, cpu.flat, 1e-6f, 0.0f, "CPU/RVNPU flat_out");
-      std::cout << "CPU vs RVNPU max_abs_diff=" << difference << std::endl;
+          Compare(output.output, cpu.output, 2e-2f, 2e-2f, "CPU/Dayan");
+      Compare(output.flat, cpu.flat, 1e-6f, 0.0f, "CPU/Dayan flat_out");
+      std::cout << "CPU vs Dayan max_abs_diff=" << difference << std::endl;
     }
     env.UnregisterExecutionProviderLibrary(kRegistrationName);
     std::cout << "PASS" << std::endl;

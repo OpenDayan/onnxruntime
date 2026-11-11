@@ -15,8 +15,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 struct Options {
   std::string model;
@@ -25,7 +25,7 @@ struct Options {
   std::string data_dir;
   std::string expected_operator;
   std::string enabled_ops;
-  std::unordered_map<std::string, size_t> expected_rvnpu_counts;
+  std::unordered_map<std::string, size_t> expected_dayan_counts;
   float absolute = 1e-4f;
   float relative = 1e-4f;
   bool report_max_error_percent = false;
@@ -67,10 +67,10 @@ Options Parse(int argc, char **argv) {
       options.data_dir = argv[++index];
     else if (argument == "--enabled-ops" && index + 1 < argc)
       options.enabled_ops = argv[++index];
-    else if (argument == "--expect-rvnpu" && index + 1 < argc) {
+    else if (argument == "--expect-dayan" && index + 1 < argc) {
       options.expected_operator = argv[++index];
-    } else if (argument == "--expect-rvnpu-counts" && index + 1 < argc) {
-      options.expected_rvnpu_counts = ParseCounts(argv[++index]);
+    } else if (argument == "--expect-dayan-counts" && index + 1 < argc) {
+      options.expected_dayan_counts = ParseCounts(argv[++index]);
     } else if (argument == "--atol" && index + 1 < argc)
       options.absolute = std::stof(argv[++index]);
     else if (argument == "--rtol" && index + 1 < argc)
@@ -84,7 +84,7 @@ Options Parse(int argc, char **argv) {
   if (options.model.empty() || options.plugin.empty() ||
       options.data_dir.empty() ||
       (options.expected_operator.empty() &&
-       options.expected_rvnpu_counts.empty())) {
+       options.expected_dayan_counts.empty())) {
     throw std::invalid_argument(
         "--model, --plugin, --data-dir and assignment "
         "expectations are required");
@@ -260,36 +260,36 @@ Comparison Compare(const Tensor &actual, const Tensor &expected, float absolute,
 }
 
 void CheckAssignment(const Ort::Session &session, const Options &options) {
-  std::unordered_map<std::string, size_t> rvnpu_counts;
+  std::unordered_map<std::string, size_t> dayan_counts;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     const std::string ep_name = subgraph.GetEpName();
     for (const auto &node : subgraph.GetNodes()) {
       const std::string op = node.GetOperatorType();
       if (ep_name == kEpName)
-        ++rvnpu_counts[op];
+        ++dayan_counts[op];
     }
   }
 
   if (!options.expected_operator.empty()) {
-    const size_t actual = rvnpu_counts[options.expected_operator];
+    const size_t actual = dayan_counts[options.expected_operator];
     if (actual == 0)
       throw std::runtime_error(options.expected_operator +
-                               " was not assigned to RVNPU EP");
+                               " was not assigned to Dayan EP");
   }
 
-  for (const auto &[name, expected] : options.expected_rvnpu_counts) {
-    const size_t actual = rvnpu_counts[name];
+  for (const auto &[name, expected] : options.expected_dayan_counts) {
+    const size_t actual = dayan_counts[name];
     if (actual != expected) {
-      throw std::runtime_error("RVNPU assignment count for " + name +
+      throw std::runtime_error("Dayan assignment count for " + name +
                                " is " + std::to_string(actual) +
                                ", expected " + std::to_string(expected));
     }
   }
-  for (const auto &[name, count] : rvnpu_counts) {
+  for (const auto &[name, count] : dayan_counts) {
     const bool allowed_by_single =
         !options.expected_operator.empty() && name == options.expected_operator;
-    if (!allowed_by_single && options.expected_rvnpu_counts.count(name) == 0) {
-      throw std::runtime_error("RVNPU EP claimed unexpected operator " + name);
+    if (!allowed_by_single && options.expected_dayan_counts.count(name) == 0) {
+      throw std::runtime_error("Dayan EP claimed unexpected operator " + name);
     }
   }
 }
@@ -299,7 +299,7 @@ void CheckAssignment(const Ort::Session &session, const Options &options) {
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-onnx-model");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-onnx-model");
 
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(
@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
           selected.push_back(device);
       }
       if (selected.size() != 1)
-        throw std::runtime_error("expected exactly one RVNPU EP device");
+        throw std::runtime_error("expected exactly one Dayan EP device");
 
       Ort::SessionOptions session_options;
       session_options.SetGraphOptimizationLevel(
@@ -334,8 +334,8 @@ int main(int argc, char **argv) {
       const auto output = Run(session, inputs);
       const Comparison comparison =
           Compare(output, cpu, options.absolute, options.relative,
-                  "CPU/RVNPU", options.report_max_error_percent);
-      std::cout << "CPU vs RVNPU max_abs_diff=" << comparison.max_abs_diff;
+                  "CPU/Dayan", options.report_max_error_percent);
+      std::cout << "CPU vs Dayan max_abs_diff=" << comparison.max_abs_diff;
       if (options.report_max_error_percent) {
         std::cout << " max_error_percent=" << comparison.max_error_percent
                   << "%";

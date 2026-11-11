@@ -52,9 +52,9 @@ void Compare(const std::vector<float> &actual,
 int main(int argc, char **argv) {
   try {
     const Options options = Parse(argc, argv);
-    rvnpu::DeviceContext context(options.elf);
+    dayan::DeviceContext context(options.elf);
     if (options.op == "resize") {
-      const auto shape = rvnpu::ValidateResizeShape({1, 2, 4, 4}, {1, 2, 8, 8});
+      const auto shape = dayan::ValidateResizeShape({1, 2, 4, 4}, {1, 2, 8, 8});
       std::vector<float> input(shape.input_elements);
       std::vector<float> output(shape.output_elements);
       std::vector<float> reference(shape.output_elements);
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
     } else if (options.op == "transpose") {
       const auto run = [&](const std::vector<int64_t> &input_shape,
                            const std::vector<int64_t> &perm) {
-        const auto shape = rvnpu::ValidateTransposeShape(input_shape, perm);
+        const auto shape = dayan::ValidateTransposeShape(input_shape, perm);
         std::vector<float> input(shape.elements), output(shape.elements),
             reference(shape.elements);
         for (size_t index = 0; index < input.size(); ++index)
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
       run({1, 4, 2, 16}, {0, 2, 1, 3});
     } else if (options.op == "reduce_max") {
       const auto shape =
-          rvnpu::ValidateReduceMaxShape({1, 32, 80}, {-1}, 0);
+          dayan::ValidateReduceMaxShape({1, 32, 80}, {-1}, 0);
       std::vector<float> input(shape.input_elements),
           output(shape.output_elements), reference(shape.output_elements);
       for (size_t index = 0; index < input.size(); ++index)
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
       std::cout << "ReduceMax shape=[1,32,80] axis=-1 ";
       Compare(output, reference);
     } else {
-      const auto shape = rvnpu::ValidateSoftmaxAxis1Shape({1, 16, 2, 16}, 1);
+      const auto shape = dayan::ValidateSoftmaxAxis1Shape({1, 16, 2, 16}, 1);
       std::vector<float> input(shape.elements), output(shape.elements),
           reference(shape.elements);
       for (size_t index = 0; index < input.size(); ++index)

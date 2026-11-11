@@ -3,32 +3,32 @@
 #include <stdexcept>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 int64_t ScalarInt64(const Ort::KernelContext &context, size_t index,
                     int64_t default_value, bool required) {
   if (index >= context.GetInputCount()) {
     if (required)
-      throw std::invalid_argument("RVNPU Slice is missing an input");
+      throw std::invalid_argument("Dayan Slice is missing an input");
     return default_value;
   }
   const Ort::ConstValue value = context.GetInput(index);
   if (value == nullptr) {
     if (required)
-      throw std::invalid_argument("RVNPU Slice is missing an input");
+      throw std::invalid_argument("Dayan Slice is missing an input");
     return default_value;
   }
   const auto info = value.GetTensorTypeAndShapeInfo();
   if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ||
       info.GetElementCount() != 1)
-    throw std::invalid_argument("RVNPU Slice controls must be scalar INT64");
+    throw std::invalid_argument("Dayan Slice controls must be scalar INT64");
   return *value.GetTensorData<int64_t>();
 }
 
 } // namespace
 
-RVNPU_DEFINE_KERNEL(
+DAYAN_DEFINE_KERNEL(
     Slice, kOnnxDomain, 13,
     (Ort::KernelDefBuilder()
          .AddTypeConstraint(
@@ -48,18 +48,18 @@ SliceKernel::SliceKernel(DeviceContext *context)
 
 OrtStatus *SliceKernel::Create(const OrtKernelInfo *, void *state,
                                OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU Slice has no DeviceContext");
+                                      "Dayan Slice has no DeviceContext");
   output = new SliceKernel(static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL SliceKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<SliceKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
@@ -67,7 +67,7 @@ OrtStatus *ORT_API_CALL SliceKernel::ComputeImpl(
   const auto input_type = input_info.GetElementType();
   if (input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
       input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
-    throw std::invalid_argument("RVNPU Slice requires FP32 or INT64 input");
+    throw std::invalid_argument("Dayan Slice requires FP32 or INT64 input");
   }
   const int64_t start = ScalarInt64(kernel_context, 1, 0, true);
   const int64_t end = ScalarInt64(kernel_context, 2, 0, true);
@@ -84,11 +84,11 @@ OrtStatus *ORT_API_CALL SliceKernel::ComputeImpl(
                             output.GetTensorMutableData<int64_t>(), shape);
   }
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL SliceKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<SliceKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

@@ -12,8 +12,8 @@
 
 namespace {
 
-constexpr const char *kRegistrationName = "RVNPUExecutionProvider.virtual";
-constexpr const char *kEpName = "RVNPUExecutionProvider";
+constexpr const char *kRegistrationName = "DayanExecutionProvider.virtual";
+constexpr const char *kEpName = "DayanExecutionProvider";
 
 struct Options {
   std::string model;
@@ -117,19 +117,19 @@ float Compare(const Result &actual, const Result &reference,
 }
 
 void CheckAssignment(const Ort::Session &session) {
-  size_t rvnpu = 0;
+  size_t dayan = 0;
   size_t cpu = 0;
   for (const auto &subgraph : session.GetEpGraphAssignmentInfo()) {
     for (const auto &node : subgraph.GetNodes()) {
       if (node.GetOperatorType() != "TopK")
         continue;
       if (std::string(subgraph.GetEpName()) == kEpName)
-        ++rvnpu;
+        ++dayan;
       else
         ++cpu;
     }
   }
-  if (rvnpu != 1 || cpu != 0) {
+  if (dayan != 1 || cpu != 0) {
     throw std::runtime_error("unexpected TopK assignment");
   }
 }
@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
     const auto input_path =
         std::filesystem::path(options.data_dir) / "input.bin";
     std::vector<float> input = ReadBinary<float>(input_path);
-    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-rvnpu-topk-onnx");
+    Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "test-dayan-topk-onnx");
     Ort::SessionOptions cpu_options;
     cpu_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
     Ort::Session cpu_session(env, options.model.c_str(), cpu_options);
@@ -168,8 +168,8 @@ int main(int argc, char **argv) {
       Ort::Session session(env, options.model.c_str(), session_options);
       CheckAssignment(session);
       const Result result = Run(session, input, input_shape);
-      const float difference = Compare(result, cpu, "CPU/RVNPU");
-      std::cout << "CPU vs RVNPU max_abs_diff=" << difference << std::endl;
+      const float difference = Compare(result, cpu, "CPU/Dayan");
+      std::cout << "CPU vs Dayan max_abs_diff=" << difference << std::endl;
     }
     env.UnregisterExecutionProviderLibrary(kRegistrationName);
     std::cout << "PASS" << std::endl;

@@ -1,6 +1,6 @@
-# RVNPU ONNX Runtime Plugin EP
+# Dayan ONNX Runtime Plugin EP
 
-本项目提供独立的 `RVNPUExecutionProvider`,不修改官方 ONNX Runtime。
+本项目提供独立的 `DayanExecutionProvider`,不修改官方 ONNX Runtime。
 
 当前支持标准 ONNX 算子:
 
@@ -110,4 +110,4 @@ CPU/NPU 检测结果逐框对比,并生成画框图片:
 - 检测结果与图片:`build/yolov8n/images/<图名>_<后处理>/results/`
 
 默认测试图为 `tests/assets/bus.jpg`(另附 zidane.jpg)。可通过
-`RVNPU_YOLO_IMAGE=/path/to/image.jpg` 指定其他测试图片。
+`DAYAN_YOLO_IMAGE=/path/to/image.jpg` 指定其他测试图片。

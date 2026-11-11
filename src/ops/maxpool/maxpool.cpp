@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -84,13 +84,13 @@ MaxPoolAttributes ReadMaxPoolAttributes(const OrtKernelInfo *info) {
 void ValidateFloat(const Ort::ConstValue &value) {
   if (value.GetTensorTypeAndShapeInfo().GetElementType() !=
       ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    throw std::invalid_argument("RVNPU MaxPool requires FP32 tensors");
+    throw std::invalid_argument("Dayan MaxPool requires FP32 tensors");
   }
 }
 
 OrtStatus *MissingContext() {
   return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                    "RVNPU MaxPool has no DeviceContext");
+                                    "Dayan MaxPool has no DeviceContext");
 }
 
 } // namespace
@@ -110,7 +110,7 @@ MaxPoolAttributes ReadMaxPoolAttributes(const Ort::ConstNode &node) {
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(MaxPool, kOnnxDomain, 12,
+DAYAN_DEFINE_KERNEL(MaxPool, kOnnxDomain, 12,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     MaxPoolKernel)
@@ -125,17 +125,17 @@ MaxPoolKernel::MaxPoolKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *MaxPoolKernel::Create(const OrtKernelInfo *info, void *state,
                                  OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return MissingContext();
   output = new MaxPoolKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL MaxPoolKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<MaxPoolKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
@@ -147,11 +147,11 @@ OrtStatus *ORT_API_CALL MaxPoolKernel::ComputeImpl(
   self.context_->RunMaxPool(input.GetTensorData<float>(),
                             output.GetTensorMutableData<float>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL MaxPoolKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<MaxPoolKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

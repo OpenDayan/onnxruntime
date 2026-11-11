@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -96,14 +96,14 @@ ConvAttributes ReadConvAttributes(const OrtKernelInfo *info) {
 void ValidateFloat(const Ort::ConstValue &value, const char *operator_name) {
   if (value.GetTensorTypeAndShapeInfo().GetElementType() !=
       ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    throw std::invalid_argument(std::string("RVNPU ") + operator_name +
+    throw std::invalid_argument(std::string("Dayan ") + operator_name +
                                 " requires FP32 tensors");
   }
 }
 
 OrtStatus *MissingContext(const char *operator_name) {
   const std::string message =
-      std::string("RVNPU ") + operator_name + " has no DeviceContext";
+      std::string("Dayan ") + operator_name + " has no DeviceContext";
   return Ort::GetApi().CreateStatus(ORT_EP_FAIL, message.c_str());
 }
 
@@ -125,7 +125,7 @@ ConvAttributes ReadConvAttributes(const Ort::ConstNode &node) {
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(Conv, kOnnxDomain, 11,
+DAYAN_DEFINE_KERNEL(Conv, kOnnxDomain, 11,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     ConvKernel)
@@ -140,17 +140,17 @@ ConvKernel::ConvKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *ConvKernel::Create(const OrtKernelInfo *info, void *state,
                               OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return MissingContext("Conv");
   output = new ConvKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL ConvKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<ConvKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
@@ -177,11 +177,11 @@ OrtStatus *ORT_API_CALL ConvKernel::ComputeImpl(
       bias == nullptr ? nullptr : bias.GetTensorData<float>(),
       output.GetTensorMutableData<float>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL ConvKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<ConvKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

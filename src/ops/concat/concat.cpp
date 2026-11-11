@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 int64_t KernelAxis(const OrtKernelInfo *info) {
@@ -13,7 +13,7 @@ int64_t KernelAxis(const OrtKernelInfo *info) {
 void RequireFloat(const Ort::ConstValue &value) {
   if (value.GetTensorTypeAndShapeInfo().GetElementType() !=
       ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::invalid_argument("RVNPU Concat requires FP32 tensors");
+    throw std::invalid_argument("Dayan Concat requires FP32 tensors");
 }
 
 } // namespace
@@ -22,15 +22,15 @@ int64_t ReadConcatAxis(const Ort::ConstNode &node) {
   Ort::ConstOpAttr attribute;
   const Ort::Status status = node.GetAttributeByName("axis", attribute);
   if (!status.IsOK() || attribute == nullptr)
-    throw std::invalid_argument("RVNPU Concat requires axis");
+    throw std::invalid_argument("Dayan Concat requires axis");
   int64_t axis = 0;
   const Ort::Status read_status = attribute.GetValue<int64_t>(axis);
   if (!read_status.IsOK())
-    throw std::invalid_argument("RVNPU Concat axis is invalid");
+    throw std::invalid_argument("Dayan Concat axis is invalid");
   return axis;
 }
 
-RVNPU_DEFINE_KERNEL(Concat, kOnnxDomain, 13,
+DAYAN_DEFINE_KERNEL(Concat, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     ConcatKernel)
@@ -44,18 +44,18 @@ ConcatKernel::ConcatKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *ConcatKernel::Create(const OrtKernelInfo *info, void *state,
                                 OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU Concat has no DeviceContext");
+                                      "Dayan Concat has no DeviceContext");
   output = new ConcatKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL ConcatKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<ConcatKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   std::vector<std::vector<int64_t>> input_shapes;
@@ -72,11 +72,11 @@ OrtStatus *ORT_API_CALL ConcatKernel::ComputeImpl(
   Ort::UnownedValue output = kernel_context.GetOutput(0, shape.output_shape);
   self.context_->RunConcat(inputs, output.GetTensorMutableData<float>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL ConcatKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<ConcatKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

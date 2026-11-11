@@ -52,10 +52,10 @@ void Compare(const std::vector<float> &actual,
 int main(int argc, char **argv) {
   try {
     std::string op;
-    rvnpu::DeviceContext context(KernelElf(argc, argv, op));
+    dayan::DeviceContext context(KernelElf(argc, argv, op));
     if (op == "concat") {
       const auto shape =
-          rvnpu::ValidateConcatShapes({{1, 2, 2, 16}, {1, 1, 2, 16}}, 1);
+          dayan::ValidateConcatShapes({{1, 2, 2, 16}, {1, 1, 2, 16}}, 1);
       const auto a = Values(64, 1);
       const auto b = Values(32, 2);
       std::vector<float> output(shape.output_elements);
@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
       std::cout << "Concat axis=1 output=[1,3,2,16] ";
       Compare(output, reference);
     } else if (op == "split") {
-      const auto shape = rvnpu::ValidateSplitShape({1, 4, 2, 16}, {2, 2}, 1, 2);
+      const auto shape = dayan::ValidateSplitShape({1, 4, 2, 16}, {2, 2}, 1, 2);
       const auto input = Values(128, 1);
       std::vector<float> first(64), second(64);
       context.RunSplit(input.data(), {first.data(), second.data()}, shape);
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
       std::cout << "Split axis=1 parts=[2,2] ";
       Compare(output, input);
     } else {
-      const auto shape = rvnpu::ValidateSliceShape({1, 4, 16}, 1, 3, 1, 1);
+      const auto shape = dayan::ValidateSliceShape({1, 4, 16}, 1, 3, 1, 1);
       const auto input = Values(64, 1);
       std::vector<float> output(shape.output_elements);
       const std::vector<float> reference(input.begin() + 16,

@@ -26,8 +26,8 @@ def make_case(directory: Path, op: str, shapes: list[list[int]]) -> None:
     else:
         output_shape = shapes[0]
     output = helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)
-    node = helper.make_node(op, names, ["output"], name=f"rvnpu_test_{op.lower()}")
-    graph = helper.make_graph([node], f"rvnpu_{op.lower()}_test", inputs, [output])
+    node = helper.make_node(op, names, ["output"], name=f"dayan_test_{op.lower()}")
+    graph = helper.make_graph([node], f"dayan_{op.lower()}_test", inputs, [output])
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
@@ -93,14 +93,14 @@ def main() -> None:
                     "Sigmoid",
                     ["input"],
                     ["sigmoid"],
-                    name="rvnpu_test_sigmoid",
+                    name="dayan_test_sigmoid",
                 ),
                 helper.make_node(
-                    "Mul", mul_inputs, ["output"], name="rvnpu_test_mul"
+                    "Mul", mul_inputs, ["output"], name="dayan_test_mul"
                 ),
             ]
             graph = helper.make_graph(
-                nodes, "rvnpu_silu_fusion_test", [input_info], [output_info]
+                nodes, "dayan_silu_fusion_test", [input_info], [output_info]
             )
             model = helper.make_model(
                 graph,

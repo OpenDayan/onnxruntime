@@ -5,15 +5,15 @@
 
 #include "plugin/memory.h"
 
-namespace rvnpu {
+namespace dayan {
 
-class RvnpuEp;
+class DayanEp;
 
-class RvnpuEpFactory final : public OrtEpFactory {
+class DayanEpFactory final : public OrtEpFactory {
 public:
-  RvnpuEpFactory(const OrtApi &api, const OrtEpApi &ep_api,
+  DayanEpFactory(const OrtApi &api, const OrtEpApi &ep_api,
                  const OrtLogger &logger, bool allow_virtual_devices);
-  ~RvnpuEpFactory();
+  ~DayanEpFactory();
 
   const OrtApi &api() const noexcept { return api_; }
   const OrtEpApi &ep_api() const noexcept { return ep_api_; }
@@ -53,8 +53,8 @@ private:
   const OrtEpApi &ep_api_;
   const OrtLogger &logger_;
   const bool allow_virtual_devices_;
-  const std::string name_{"RVNPUExecutionProvider"};
-  const std::string vendor_{"RVNPU"};
+  const std::string name_{"DayanExecutionProvider"};
+  const std::string vendor_{"Dayan"};
   const uint32_t vendor_id_{0x5256};
   const std::string version_{"0.1.0"};
 
@@ -64,4 +64,4 @@ private:
   OrtHardwareDevice *virtual_device_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

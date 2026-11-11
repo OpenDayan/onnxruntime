@@ -27,7 +27,7 @@ def save_case(
         "output", TensorProto.FLOAT, [None, None, None, None]
     )
     graph = helper.make_graph(
-        [node], "rvnpu_conv_test", [graph_input], [graph_output], initializers
+        [node], "dayan_conv_test", [graph_input], [graph_output], initializers
     )
     model = helper.make_model(
         graph,
@@ -51,7 +51,7 @@ def make_conv_cases(output_dir: Path) -> None:
         "Conv",
         ["input", "weight", "bias"],
         ["output"],
-        name="rvnpu_test_conv",
+        name="dayan_test_conv",
         dilations=[1, 1],
         group=1,
         kernel_shape=[3, 3],

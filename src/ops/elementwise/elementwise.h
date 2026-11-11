@@ -3,7 +3,7 @@
 #include "plugin/kernel_registry.h"
 #include "runtime/device_context.h"
 
-namespace rvnpu {
+namespace dayan {
 
 class AddKernel final : public OrtKernelImpl {
 public:
@@ -75,4 +75,4 @@ private:
   DeviceContext *context_{};
 };
 
-} // namespace rvnpu
+} // namespace dayan

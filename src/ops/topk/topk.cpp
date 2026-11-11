@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace rvnpu {
+namespace dayan {
 
 namespace {
 
@@ -49,7 +49,7 @@ TopKAttributes ReadTopKAttributes(const Ort::ConstNode &node) {
   return result;
 }
 
-RVNPU_DEFINE_KERNEL(TopK, kOnnxDomain, 11,
+DAYAN_DEFINE_KERNEL(TopK, kOnnxDomain, 11,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     TopKKernel)
@@ -64,19 +64,19 @@ TopKKernel::TopKKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *TopKKernel::Create(const OrtKernelInfo *info, void *state,
                               OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr) {
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU TopK has no DeviceContext");
+                                      "Dayan TopK has no DeviceContext");
   }
   output = new TopKKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL TopKKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<TopKKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
@@ -87,7 +87,7 @@ OrtStatus *ORT_API_CALL TopKKernel::ComputeImpl(
       k_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 ||
       k_info.GetElementCount() != 1) {
     throw std::invalid_argument(
-        "RVNPU TopK requires FP32 input and one INT64 K value");
+        "Dayan TopK requires FP32 input and one INT64 K value");
   }
   const auto shape = ValidateTopKShape(
       input_info.GetShape(), *k_value.GetTensorData<int64_t>(),
@@ -100,11 +100,11 @@ OrtStatus *ORT_API_CALL TopKKernel::ComputeImpl(
                          values.GetTensorMutableData<float>(),
                          indices.GetTensorMutableData<int64_t>(), shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL TopKKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<TopKKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan

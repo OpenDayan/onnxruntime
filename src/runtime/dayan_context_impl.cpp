@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#if defined(RVNPU_CONV_PROFILE)
+#if defined(DAYAN_CONV_PROFILE)
 #include <atomic>
 #endif
 
@@ -13,7 +13,7 @@
 #include "runtime/cpu_reference.h"
 #include "runtime/tensor_utils.h"
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 constexpr uint32_t kTimeout = 18000000;
@@ -85,7 +85,7 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
   const bool same = shape.lhs_elements == shape.output_elements &&
                     shape.rhs_elements == shape.output_elements;
   const size_t bytes = shape.output_elements * 4;
-  const bool named_profile = std::getenv("RVNPU_PROFILE_OPERATOR_NAMES") != nullptr;
+  const bool named_profile = std::getenv("DAYAN_PROFILE_OPERATOR_NAMES") != nullptr;
   const char *binary_task = code == 0 ? "ort-Add" : code == 1 ? "ort-Mul"
       : code == 2 ? "ort-Sub" : "ort-Div";
   DAYAN_ATTRS(named_profile ? binary_task : "ort-binary");
@@ -104,12 +104,12 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
     CopyToDevice(a.Get(), pl.data(), padded * 4);
     CopyToDevice(b.Get(), pr.data(), padded * 4);
     status =
-        code == 0 ? rvnpu_add_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
+        code == 0 ? dayan_add_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
         : code == 1
-            ? rvnpu_mul_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
+            ? dayan_mul_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
         : code == 2
-            ? rvnpu_sub_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
-            : rvnpu_div_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs);
+            ? dayan_sub_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs)
+            : dayan_div_fp32(a.Get(), b.Get(), c.Get(), padded, &attrs);
     if (status == 0)
       CopyFromDevice(out, c.Get(), bytes);
   } else {
@@ -135,7 +135,7 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
       ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                              shape.output_elements);
     }
-    status = rvnpu_binary_broadcast_fp32(
+    status = dayan_binary_broadcast_fp32(
         a.Get(), b.Get(), c.Get(), ld[0], ld[1], ld[2], ld[3], rd[0], rd[1],
         rd[2], rd[3], code, &attrs);
     if (status == 0)
@@ -177,15 +177,15 @@ void DeviceContext::RunUnary(const float *x, float *y,
   size_t b = padded * 4, ob = s.elements * 4;
   DayanDeviceBuffer i(runtime_, b), o(runtime_, b);
   CopyToDevice(i.Get(), x, b);
-  const bool named_profile = std::getenv("RVNPU_PROFILE_OPERATOR_NAMES") != nullptr;
+  const bool named_profile = std::getenv("DAYAN_PROFILE_OPERATOR_NAMES") != nullptr;
   DAYAN_ATTRS(named_profile ? (silu ? "ort-Silu" : "ort-Sigmoid") : "ort-unary");
   if (padded >= 8192U && runtime_.supports_four_core()) {
     attrs.config.task_dim = NPUTaskDim3{4U, 1, 1};
     attrs.config.task_mode = NPUTaskMode::kFourCore;
   }
-  int st = silu ? rvnpu_silu_f32(i.Get(), o.Get(), 1U, 1U, 1U, uint32_t(padded),
+  int st = silu ? dayan_silu_f32(i.Get(), o.Get(), 1U, 1U, 1U, uint32_t(padded),
                                  &attrs)
-                : rvnpu_sigmoid_f32(i.Get(), o.Get(), 1U, 1U, 1U,
+                : dayan_sigmoid_f32(i.Get(), o.Get(), 1U, 1U, 1U,
                                     uint32_t(padded), &attrs);
   RequireSuccess(st, op);
   CopyFromDevice(y, o.Get(), ob);
@@ -227,7 +227,7 @@ void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
     ConfigureLargeTransfer(
         attrs, runtime_.supports_four_core(),
         size_t(s.outer) * s.input_axes[i] * s.inner);
-    RequireSuccess(rvnpu_concat_fp32(in.Get(), out.Get(), s.outer,
+    RequireSuccess(dayan_concat_fp32(in.Get(), out.Get(), s.outer,
                                      s.input_axes[i], s.output_axis, s.inner,
                                      uint32_t(axis_offset), &attrs),
                    "Concat");
@@ -259,7 +259,7 @@ void DeviceContext::RunSplit(const float *input,
     ConfigureLargeTransfer(
         attrs, runtime_.supports_four_core(),
         size_t(s.outer) * s.output_axes[i] * s.inner);
-    RequireSuccess(rvnpu_split_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
+    RequireSuccess(dayan_split_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
                                     s.output_axes[i], s.inner,
                                     uint32_t(axis_offset), &attrs),
                    "Split");
@@ -281,7 +281,7 @@ void DeviceContext::RunSlice(const float *input, float *output,
   DAYAN_ATTRS("ort-slice");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                          s.output_elements);
-  RequireSuccess(rvnpu_slice_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
+  RequireSuccess(dayan_slice_fp32(in.Get(), out.Get(), s.outer, s.input_axis,
                                   s.start, s.length, s.step, s.inner, &attrs),
                  "Slice");
   CopyFromDevice(output, out.Get(), ob);
@@ -300,7 +300,7 @@ void DeviceContext::RunSlice(const int64_t *input, int64_t *output,
   DAYAN_ATTRS("ort-slice-i64");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                          s.output_elements);
-  RequireSuccess(rvnpu_slice_int64(in.Get(), out.Get(), s.outer, s.input_axis,
+  RequireSuccess(dayan_slice_int64(in.Get(), out.Get(), s.outer, s.input_axis,
                                    s.start, s.length, s.step, s.inner, &attrs),
                  "Slice int64");
   CopyFromDevice(output, out.Get(), ob);
@@ -317,7 +317,7 @@ void DeviceContext::RunResize(const float *input, float *output,
   DAYAN_ATTRS("ort-resize");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                          s.output_elements);
-  RequireSuccess(rvnpu_resize_nearest_nchw_fp32(
+  RequireSuccess(dayan_resize_nearest_nchw_fp32(
                      in.Get(), out.Get(), s.batch, s.channels, s.input_h,
                      s.input_w, s.output_h, s.output_w, &attrs),
                  "Resize");
@@ -335,7 +335,7 @@ void DeviceContext::RunTranspose(const float *input, float *output,
   DAYAN_ATTRS("ort-transpose");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   int mode = s.rank == 2 ? 0 : s.rank == 3 ? 1 : 2;
-  RequireSuccess(rvnpu_transpose_fp32(in.Get(), out.Get(), s.dims[0], s.dims[1],
+  RequireSuccess(dayan_transpose_fp32(in.Get(), out.Get(), s.dims[0], s.dims[1],
                                       s.dims[2], s.dims[3], mode, &attrs),
                  "Transpose");
   CopyFromDevice(output, out.Get(), b);
@@ -355,7 +355,7 @@ void DeviceContext::RunTranspose(const int64_t *input, int64_t *output,
   CopyToDevice(in.Get(), input, b);
   DAYAN_ATTRS("ort-trans-i64");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
-  RequireSuccess(rvnpu_transpose_10_int64(in.Get(), out.Get(), s.dims[0],
+  RequireSuccess(dayan_transpose_10_int64(in.Get(), out.Get(), s.dims[0],
                                           s.dims[1], &attrs),
                  "Transpose int64");
   CopyFromDevice(output, out.Get(), b);
@@ -372,7 +372,7 @@ void DeviceContext::RunSoftmax(const float *x, float *y,
   DAYAN_ATTRS("ort-softmax");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   RequireSuccess(
-      rvnpu_softmax_axis1_fp32(i.Get(), o.Get(), s.outer, s.axis, s.inner, &attrs),
+      dayan_softmax_axis1_fp32(i.Get(), o.Get(), s.outer, s.axis, s.inner, &attrs),
       "Softmax");
   CopyFromDevice(y, o.Get(), b);
 }
@@ -388,7 +388,7 @@ void DeviceContext::RunReduceMax(const float *x, float *y,
   DAYAN_ATTRS("ort-reduce");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                          static_cast<size_t>(s.rows) * s.columns);
-  RequireSuccess(rvnpu_reduce_max_lastdim_fp32(in.Get(), out.Get(), s.rows,
+  RequireSuccess(dayan_reduce_max_lastdim_fp32(in.Get(), out.Get(), s.rows,
                                                s.columns, &attrs),
                  "ReduceMax");
   CopyFromDevice(y, out.Get(), ob);
@@ -406,7 +406,7 @@ void DeviceContext::RunArgMax(const float *x, int64_t *y,
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
                          static_cast<size_t>(s.rows) * s.columns);
   RequireSuccess(
-      rvnpu_argmax_lastdim_fp32(in.Get(), out.Get(), s.rows, s.columns, 0, &attrs),
+      dayan_argmax_lastdim_fp32(in.Get(), out.Get(), s.rows, s.columns, 0, &attrs),
       "ArgMax");
   CopyFromDevice(y, out.Get(), ob);
 }
@@ -421,7 +421,7 @@ void DeviceContext::RunMaxPool(const float *x, float *y,
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-maxpool");
   // 四核 MaxPool 的 5x5 YOLO 形状尚未通过 RTL 验证，保持单核。
-  RequireSuccess(rvnpu_maxpool2d_nchw_fp32(
+  RequireSuccess(dayan_maxpool2d_nchw_fp32(
                      in.Get(), out.Get(), s.batch, s.channels, s.input_h,
                      s.input_w, s.output_h, s.output_w, s.kernel_h, s.kernel_w,
                      s.stride_h, s.stride_w, s.pad_h, s.pad_w, &attrs),
@@ -440,7 +440,7 @@ void DeviceContext::RunTopK(const float *x, float *v, int64_t *i,
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-topk");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
-  RequireSuccess(rvnpu_topk_lastdim_fp32(in.Get(), ov.Get(), oi.Get(), s.rows,
+  RequireSuccess(dayan_topk_lastdim_fp32(in.Get(), ov.Get(), oi.Get(), s.rows,
                                          s.columns, s.k, &attrs),
                  "TopK");
   CopyFromDevice(v, ov.Get(), vb);
@@ -461,7 +461,7 @@ void DeviceContext::RunGatherNd(const float *data, const int64_t *indices,
   CopyToDevice(in.Get(), indices, ib);
   DAYAN_ATTRS("ort-gather");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
-  RequireSuccess(rvnpu_gather_nd_fp32(d.Get(), in.Get(), o.Get(), s.rows,
+  RequireSuccess(dayan_gather_nd_fp32(d.Get(), in.Get(), o.Get(), s.rows,
                                       s.index_depth, s.data_dims[0],
                                       s.data_dims[1], s.data_dims[2], &attrs),
                  "GatherND");
@@ -482,7 +482,7 @@ void DeviceContext::RunGatherNd(const int64_t *data, const int64_t *indices,
   CopyToDevice(in.Get(), indices, ib);
   DAYAN_ATTRS("ort-gather-i64");
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.rows);
-  RequireSuccess(rvnpu_gather_nd_int64(d.Get(), in.Get(), o.Get(), s.rows,
+  RequireSuccess(dayan_gather_nd_int64(d.Get(), in.Get(), o.Get(), s.rows,
                                        s.index_depth, s.data_dims[0],
                                        s.data_dims[1], s.data_dims[2], &attrs),
                  "GatherND int64");
@@ -509,7 +509,7 @@ std::vector<int64_t> DeviceContext::RunNms(const float *boxes,
   PackFloat(iou, ibits);
   PackFloat(score, sbits);
   DAYAN_ATTRS("ort-nms");
-  RequireSuccess(rvnpu_nms_fp32(bi.Get(), si.Get(), out.Get(), count.Get(),
+  RequireSuccess(dayan_nms_fp32(bi.Get(), si.Get(), out.Get(), count.Get(),
                                 s.num_boxes, s.num_classes,
                                 s.max_output_per_class, ibits, sbits,
                                 s.center_point_box, &attrs),
@@ -716,7 +716,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
     const uint32_t reserved_uram = 1536U * 1024U;
     if (tile_bytes > reserved_uram)
       throw std::invalid_argument("Conv tile exceeds reserved URAM");
-#if defined(RVNPU_CONV_PROFILE)
+#if defined(DAYAN_CONV_PROFILE)
     std::printf("CONV_PROFILE_CONFIG tile=%ux%u ci=%u co=%u "
                 "uram_used=%llu uram_reserved=%u\n",
                 config.tile_h, config.tile_w, config.tile_ci, config.tile_co,
@@ -725,7 +725,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
     DayanDeviceBuffer config_buffer(runtime_, sizeof(config));
     CopyToDevice(config_buffer.Get(), &config, sizeof(config));
 
-#if defined(RVNPU_CONV_PROFILE)
+#if defined(DAYAN_CONV_PROFILE)
     Conv2dProfileRecord records[4]{};
     DayanDeviceBuffer timing_buffer(runtime_, sizeof(records));
     static std::atomic<uint64_t> next_call_id{0};
@@ -749,7 +749,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
       attrs.config.task_mode =
           NPUTaskMode::kFourCore;
       attrs.timeout_ms = kTimeout;
-#if defined(RVNPU_CONV_PROFILE)
+#if defined(DAYAN_CONV_PROFILE)
       // 超时后必须确认任务已终止，才能再次提交。
       attrs.timeout_ms = 45U * 60U * 1000U;
       const uint64_t call_id = ++next_call_id;
@@ -810,4 +810,4 @@ void DeviceContext::RunConv(const float *input, const float *weight,
 
 }
 
-} // namespace rvnpu
+} // namespace dayan

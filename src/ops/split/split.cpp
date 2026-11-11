@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace rvnpu {
+namespace dayan {
 namespace {
 
 int64_t KernelAxis(const OrtKernelInfo *info) {
@@ -20,17 +20,17 @@ int64_t ReadSplitAxis(const Ort::ConstNode &node) {
   Ort::ConstOpAttr attribute;
   const Ort::Status status = node.GetAttributeByName("axis", attribute);
   if (!status.IsOK())
-    throw std::invalid_argument("cannot read RVNPU Split axis");
+    throw std::invalid_argument("cannot read Dayan Split axis");
   if (attribute == nullptr)
     return 0;
   int64_t axis = 0;
   const Ort::Status read_status = attribute.GetValue<int64_t>(axis);
   if (!read_status.IsOK())
-    throw std::invalid_argument("RVNPU Split axis is invalid");
+    throw std::invalid_argument("Dayan Split axis is invalid");
   return axis;
 }
 
-RVNPU_DEFINE_KERNEL(Split, kOnnxDomain, 13,
+DAYAN_DEFINE_KERNEL(Split, kOnnxDomain, 13,
                     (Ort::KernelDefBuilder().AddTypeConstraint(
                         "T", TensorType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT))),
                     SplitKernel)
@@ -44,30 +44,30 @@ SplitKernel::SplitKernel(const OrtKernelInfo *info, DeviceContext *context)
 
 OrtStatus *SplitKernel::Create(const OrtKernelInfo *info, void *state,
                                OrtKernelImpl *&output) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   if (state == nullptr)
     return Ort::GetApi().CreateStatus(ORT_EP_FAIL,
-                                      "RVNPU Split has no DeviceContext");
+                                      "Dayan Split has no DeviceContext");
   output = new SplitKernel(info, static_cast<DeviceContext *>(state));
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 OrtStatus *ORT_API_CALL SplitKernel::ComputeImpl(
     OrtKernelImpl *kernel, OrtKernelContext *context) noexcept {
-  RVNPU_EXCEPTION_GUARD_BEGIN
+  DAYAN_EXCEPTION_GUARD_BEGIN
   auto &self = *static_cast<SplitKernel *>(kernel);
   Ort::KernelContext kernel_context(context);
   const Ort::ConstValue input = kernel_context.GetInput(0);
   const auto input_info = input.GetTensorTypeAndShapeInfo();
   if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-    throw std::invalid_argument("RVNPU Split requires FP32 input");
+    throw std::invalid_argument("Dayan Split requires FP32 input");
   if (kernel_context.GetInputCount() < 2)
-    throw std::invalid_argument("RVNPU Split requires explicit split sizes");
+    throw std::invalid_argument("Dayan Split requires explicit split sizes");
   const Ort::ConstValue split = kernel_context.GetInput(1);
   const auto split_info = split.GetTensorTypeAndShapeInfo();
   if (split_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)
-    throw std::invalid_argument("RVNPU Split sizes must be INT64");
+    throw std::invalid_argument("Dayan Split sizes must be INT64");
   const size_t count = split_info.GetElementCount();
   const int64_t *split_data = split.GetTensorData<int64_t>();
   std::vector<int64_t> splits(split_data, split_data + count);
@@ -83,11 +83,11 @@ OrtStatus *ORT_API_CALL SplitKernel::ComputeImpl(
   }
   self.context_->RunSplit(input.GetTensorData<float>(), outputs, shape);
   return nullptr;
-  RVNPU_EXCEPTION_GUARD_END
+  DAYAN_EXCEPTION_GUARD_END
 }
 
 void ORT_API_CALL SplitKernel::ReleaseImpl(OrtKernelImpl *kernel) noexcept {
   delete static_cast<SplitKernel *>(kernel);
 }
 
-} // namespace rvnpu
+} // namespace dayan
