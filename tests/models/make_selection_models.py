@@ -12,7 +12,7 @@ def save_model(directory: Path, graph: onnx.GraphProto) -> None:
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
-        producer_name="onnxruntime-rvnpu",
+        producer_name="onnxruntime",
     )
     model.ir_version = 10
     model = shape_inference.infer_shapes(model)

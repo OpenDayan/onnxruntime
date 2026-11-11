@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PYTHON="${PYTHON_EXECUTABLE:-python3}"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"
 MODEL="${MODEL_DIR}/yolov8n.onnx"
-# 换测试图:改这里的路径,或运行时设 RVNPU_YOLO_IMAGE
 IMAGE="${RVNPU_YOLO_IMAGE:-${ROOT_DIR}/tests/assets/bus.jpg}"
 
 mkdir -p "${MODEL_DIR}"

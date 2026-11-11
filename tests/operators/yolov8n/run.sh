@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ELF="${RVNPU_KERNEL_ELF:-/tmp/dummy-kernel-elf}"
+BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
+ELF="${RVNPU_KERNEL_ELF:-${BUILD_DIR}/dummy-kernel-elf}"
+[[ -e "${ELF}" ]] || : > "${ELF}"
 PYTHON="${PYTHON_EXECUTABLE:-python3}"
 MODEL_DIR="${ROOT_DIR}/build/yolov8n"
 POSTPROCESS="${YOLO_POSTPROCESS:-manual}"   # manual(默认) | official
@@ -18,8 +20,8 @@ data_dir="${MODEL_DIR}/images/${name}/data"
 result_dir="${MODEL_DIR}/images/${name}_${POSTPROCESS}/results"
 
 echo "========== yolov8n image=${name} postprocess=${POSTPROCESS} =========="
-"${ROOT_DIR}/build/linux/test_rvnpu_yolov8n" --model "${MODEL}" \
-  --plugin "${ROOT_DIR}/build/linux/librvnpu_ep.so" \
+"${BUILD_DIR}/test_rvnpu_yolov8n" --model "${MODEL}" \
+  --plugin "${BUILD_DIR}/librvnpu_ep.so" \
   --kernel-elf "${ELF}" --data-dir "${data_dir}" \
   --results-json "${result_dir}/results.json"
 "${PYTHON}" "${ROOT_DIR}/tools/yolov8n_image.py" draw \

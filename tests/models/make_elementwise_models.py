@@ -31,7 +31,7 @@ def make_case(directory: Path, op: str, shapes: list[list[int]]) -> None:
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
-        producer_name="onnxruntime-rvnpu",
+        producer_name="onnxruntime",
     )
     model.ir_version = 10
     onnx.checker.check_model(model)
@@ -105,7 +105,7 @@ def main() -> None:
             model = helper.make_model(
                 graph,
                 opset_imports=[helper.make_opsetid("", 13)],
-                producer_name="onnxruntime-rvnpu",
+                producer_name="onnxruntime",
             )
             model.ir_version = 10
             onnx.checker.check_model(model)

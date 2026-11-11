@@ -72,7 +72,7 @@ def make_case(directory: Path, center_point_box: int, constant_node: bool = Fals
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
-        producer_name="onnxruntime-rvnpu",
+        producer_name="onnxruntime",
     )
     model.ir_version = 10
     model = shape_inference.infer_shapes(model)
@@ -150,7 +150,7 @@ def make_topk_pipeline(directory: Path) -> None:
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
-        producer_name="onnxruntime-rvnpu",
+        producer_name="onnxruntime",
     )
     model.ir_version = 10
     model = shape_inference.infer_shapes(model)
@@ -239,7 +239,7 @@ def make_yolo_postprocess(directory: Path) -> None:
     )
     model = helper.make_model(
         graph, opset_imports=[helper.make_opsetid("", 13)],
-        producer_name="onnxruntime-rvnpu",
+        producer_name="onnxruntime",
     )
     model.ir_version = 10
     model = shape_inference.infer_shapes(model)

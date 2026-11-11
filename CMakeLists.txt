@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(onnxruntime_rvnpu VERSION 0.1.0 LANGUAGES C CXX)
+project(onnxruntime VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -8,14 +8,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(ONNXRUNTIME_ROOT "" CACHE PATH "ONNX Runtime source or SDK root")
 set(ONNXRUNTIME_LIB_DIR "" CACHE PATH "Directory containing libonnxruntime")
-set(DAYAN_RUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../dayan-base" CACHE PATH "dayan-base repository root")
-set(DAYAN_KERNEL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../dayan-base" CACHE PATH "dayan-base repository root")
+set(DAYAN_ROOT "" CACHE PATH "dayan-base repository root")
+set(DAYAN_RUNTIME_ROOT "${DAYAN_ROOT}" CACHE PATH "dayan-base runtime repository root")
+set(DAYAN_KERNEL_ROOT "${DAYAN_ROOT}" CACHE PATH "dayan-base kernel repository root")
 set(DAYAN_KERNEL_OBJECT_DIR "${DAYAN_KERNEL_ROOT}/build/demo/onnx" CACHE PATH "dycc-generated ONNX kernel objects")
 file(GLOB DAYAN_KERNEL_OBJECTS "${DAYAN_KERNEL_OBJECT_DIR}/*.o")
 
 foreach(required_var ONNXRUNTIME_ROOT ONNXRUNTIME_LIB_DIR DAYAN_RUNTIME_ROOT DAYAN_KERNEL_ROOT)
   if(NOT ${required_var})
-    message(FATAL_ERROR "${required_var} is required")
+    message(FATAL_ERROR "${required_var} is required; set DAYAN_ROOT or the individual paths")
   endif()
 endforeach()
 

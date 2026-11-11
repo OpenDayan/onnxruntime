@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# 一键构建:SDK 准备 + dycc 内核编译 + cmake + 单元测试
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,6 +10,7 @@ CMAKE_COMMAND="${CMAKE_COMMAND:-cmake}"
 
 "${CMAKE_COMMAND}" -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DDAYAN_ROOT="${DAYAN_ROOT:?set DAYAN_ROOT to the dayan-base repository root}" \
   -DONNXRUNTIME_ROOT="${ROOT_DIR}/build/ort-sdk" \
   -DONNXRUNTIME_LIB_DIR="${ROOT_DIR}/build/ort-sdk/lib"
 "${CMAKE_COMMAND}" --build "${BUILD_DIR}" --parallel "${JOBS:-8}"

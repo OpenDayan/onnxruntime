@@ -1,39 +1,21 @@
 #!/usr/bin/env bash
-# 迁移链路（dayan）的算子回归：把 build/linux 指到 dayan-migration 产物后，
-# 原样执行 tests/operators/<op>/run.sh。
+# Dayan 算子回归。
 #
-# 前置：dayan_server 已在跑（DAYAN_SERVER_SOCKET，默认 /tmp/dayan-server.sock）。
-# 用法：run_dayan_tests.sh [--report] [op ...]
-#       run_dayan_tests.sh yolov8n           # bus.jpg + manual 后处理(默认)
-#       run_dayan_tests.sh yolov8n-official  # bus.jpg + 官方后处理
-#       RVNPU_YOLO_IMAGE=xxx.jpg ...         # 可选,替换测试图片
+# run_dayan_tests.sh [--report] [--direct-ops] [--out DIR] [--conv SPEC] [op ...]
+#   --report      输出张量尺寸、仿真周期和 CSV 汇总。
+#   --direct-ops  测试代表算子并外推整网周期，需要 TestCluster 的 tmux 会话。
+#   --conv SPEC   IN:W:STRIDE:PAD，例如 1,3,15,17:5,3,3,3:2,2:1,1。
+#   --out DIR     direct-ops 结果目录。
+#   op            只运行指定算子，如 add、matmul、yolov8n-official。
 #
-#   --report   打印每个算子的测试张量尺寸，并测出该算子消耗的仿真周期，末尾汇总成表。
-#              等价于 DAYAN_REPORT=1。
-#              周期读数取自 TestCluster 的 TUI（tmux 会话 DAYAN_TC_SESSION，默认 sim），
-#              刷新粒度约 1 秒，因此耗时很短的算子可能读到 0，只能算上界。
-#              汇总同时写入 ${DAYAN_CYCLE_CSV}（默认 /tmp/dy-op-cycles.csv）。
-#
-#   --direct-ops  direct 性能测试：跑一组小尺寸代表算子（直测工具，自带数值
-#                 校验），每个样本用 TUI Cycle 差值测周期（扣 22k 进程固定开销），再按
-#                 direct 测试的速率模型外推 yolov8n_64 整网总周期。
-#                 结果写 build/yolo_representative/yolov8n_64_dayan/。
-#     --conv S    覆盖 conv 样本尺寸，格式 "IN:W:STRIDE:PAD"，如
-#                 "1,3,15,17:5,3,3,3:2,2:1,1"（默认即此值；换大尺寸可提高 conv 速率
-#                 精度，conv 占整网估算 ~84%，是主要误差源）。分隔符用冒号，分号在
-#                 ssh/zsh 多层引号下会被当命令分隔。
-#     --out DIR   结果目录（默认 build/yolo_representative/yolov8n_64_dayan）。
-#
-# 不带参数运行全部算子和 YOLOv8n 真实图片测试。
-# 注意：RTL 目前没有实现周期时间戳寄存器（device/include/platform_regs.h 里的
-# DAYAN_PCU_CYCLE 只是预留槽位），npu_profile_pcu_read() 会返回 -ENODATA，
-# 所以周期只能这样从 TestCluster 侧量，走不了 dyperf --pcu。
+# DAYAN_SERVER_SOCKET 指定 dayan_server socket；RVNPU_YOLO_IMAGE 指定测试图片。
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SHIM=/tmp/dy-tests
+mkdir -p "${ROOT_DIR}/build"
+TEST_LOG_DIR="${DAYAN_TEST_LOG_DIR:-${ROOT_DIR}/build/dayan-test-logs}"
 TC_SESSION="${DAYAN_TC_SESSION:-sim}"
-CYCLE_CSV="${DAYAN_CYCLE_CSV:-/tmp/dy-op-cycles.csv}"
+CYCLE_CSV="${DAYAN_CYCLE_CSV:-${ROOT_DIR}/build/dayan-op-cycles.csv}"
 
 REPORT=0
 [[ "${DAYAN_REPORT:-0}" == "1" ]] && REPORT=1
@@ -51,7 +33,7 @@ while (($#)); do
                   CONV_SPEC="$2"; shift ;;
     --out)        [[ $# -ge 2 ]] || { echo "--out 需要参数" >&2; exit 2; }
                   OUT_DIR="$2"; shift ;;
-    -h|--help)    sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)    sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)            POS+=("$1") ;;
   esac
   shift
@@ -59,38 +41,22 @@ done
 set -- ${POS[@]+"${POS[@]}"}
 
 export LD_LIBRARY_PATH="${ROOT_DIR}/build/ort-sdk/lib:${LD_LIBRARY_PATH:-}"
-export DAYAN_SERVER_SOCKET="${DAYAN_SERVER_SOCKET:-/tmp/dayan-server.sock}"
+export DAYAN_SERVER_SOCKET="${DAYAN_SERVER_SOCKET:-${TMPDIR:-/tmp}/dayan-server.sock}"
+export BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/dayan-migration}"
+export RVNPU_KERNEL_ELF="${RVNPU_KERNEL_ELF:-${ROOT_DIR}/build/dummy-kernel-elf}"
 
-setup_shim() {
-  rm -rf "${SHIM}"
-  mkdir -p "${SHIM}/build"
-  ln -s "${ROOT_DIR}/tests" "${SHIM}/tests"
-  ln -s "${ROOT_DIR}/tools" "${SHIM}/tools" 2>/dev/null
-  ln -s "${ROOT_DIR}/scripts" "${SHIM}/scripts" 2>/dev/null
-  ln -s "${ROOT_DIR}/build/dayan-migration" "${SHIM}/build/linux"
-  ln -s "${ROOT_DIR}/build/models" "${SHIM}/build/models"
-  for d in operators yolo_representative; do
-    ln -s "${ROOT_DIR}/build/${d}" "${SHIM}/build/${d}" 2>/dev/null
-  done
-  : > /tmp/dummy-kernel-elf
-}
-
-# ---------- TestCluster 周期读数 ----------
+mkdir -p "${TEST_LOG_DIR}"
+[[ -e "${RVNPU_KERNEL_ELF}" ]] || : > "${RVNPU_KERNEL_ELF}"
 
 tc_available() {
   command -v tmux >/dev/null 2>&1 && tmux has-session -t "${TC_SESSION}" 2>/dev/null
 }
 
-# TUI 里的 `Cycle249688/20000000` 是当前仿真周期，取斜杠前的数字。
-# 窄窗口下会截断成 `Cycl1291665/49`，两种形态都要匹配。
 tc_cycles() {
   tmux capture-pane -t "${TC_SESSION}" -p 2>/dev/null \
     | grep -a -o -E 'Cycl[a-z]*[0-9]+/' | head -1 | tr -dc '0-9'
 }
 
-# ---------- 测试张量尺寸 ----------
-
-# 形状写在 onnx 模型里的算子：直接读模型，打印每个测试模型的输入张量形状。
 model_sizes() {
   local models=("${ROOT_DIR}/build/operators/$1"/*/model.onnx)
   [[ -e "${models[0]}" ]] || return 0
@@ -119,9 +85,8 @@ for path in sys.argv[2:]:
 PY
 }
 
-# 优先用 run.sh 里直接调用写死的形状；没有就读 onnx 模型。
 op_sizes() {
-  local op="$1" rs="${SHIM}/tests/operators/${op}/run.sh" out=""
+  local op="$1" rs="${ROOT_DIR}/tests/operators/${op}/run.sh" out=""
   if [[ -f "${rs}" ]]; then
     out="$(grep -o -E \
         -- '--(shape|rhs-shape|input-shape|weight-shape) [0-9,x]+|--m [0-9]+ --n [0-9]+ --k [0-9]+|--rows [0-9]+ --columns [0-9]+ --k [0-9]+' \
@@ -129,18 +94,15 @@ op_sizes() {
   fi
   [[ -z "${out}" ]] && out="$(model_sizes "${op}")"
   [[ -z "${out}" ]] && out="-"
-  # 太长的截断，表格里放不下
   if (( ${#out} > 150 )); then out="${out:0:147}..."; fi
   printf '%s' "${out}"
 }
-
-# ---------- 跑算子 ----------
 
 ROWS=()
 
 run_op() {
   local op="$1"
-  local log="/tmp/dy-op-${op}.log"
+  local log="${TEST_LOG_DIR}/${op}.log"
   local sizes="-" c0="" c1="" cycles="-" t0 t1 wall rc
 
   if [[ ${REPORT} == 1 ]]; then sizes="$(op_sizes "${op}")"; fi
@@ -148,8 +110,8 @@ run_op() {
   echo "########## ${op}"
   [[ ${REPORT} == 1 ]] && echo "  sizes: ${sizes}"
 
-  if [[ -f "${SHIM}/tests/operators/${op}/prepare.sh" ]]; then
-    if ! bash "${SHIM}/tests/operators/${op}/prepare.sh" >>"${log}.prepare" 2>&1; then
+  if [[ -f "${ROOT_DIR}/tests/operators/${op}/prepare.sh" ]]; then
+    if ! bash "${ROOT_DIR}/tests/operators/${op}/prepare.sh" >>"${log}.prepare" 2>&1; then
       echo "PREPARE FAIL ${op}"
       ROWS+=("${op}|${sizes}|-|-|PREPARE_FAIL")
       return 1
@@ -158,7 +120,7 @@ run_op() {
 
   if [[ ${REPORT} == 1 ]] && tc_available; then c0="$(tc_cycles)"; fi
   t0=$(date +%s)
-  if bash "${SHIM}/tests/operators/${op}/run.sh" >"${log}" 2>&1; then rc=0; else rc=1; fi
+  if bash "${ROOT_DIR}/tests/operators/${op}/run.sh" >"${log}" 2>&1; then rc=0; else rc=1; fi
   t1=$(date +%s)
   wall=$((t1 - t0))
   if [[ -n "${c0}" ]] && tc_available; then
@@ -177,7 +139,7 @@ run_op() {
 }
 
 print_summary() {
-  local total=0 ok=1
+  local total=0
   echo
   echo "======== SUMMARY fail=${1}"
   if [[ ${REPORT} != 1 ]]; then return; fi
@@ -206,22 +168,16 @@ print_summary() {
   echo "（周期明细已写入 ${CYCLE_CSV}）"
 }
 
-# ---------- direct 性能测试（--direct-ops） ----------
-
-# 每个直测样本一次进程：TUI Cycle 前后差值，再扣掉进程固定开销（约 22k，含固件
-# 上下文加载/启动），得到该算子样本的净周期。TUI 刷新 ~1s，短样本读数偏粗。
 DAYAN_FIXED_CYCLES=22000
 
 run_direct_sample() {
   local name="$1" tool="$2"; shift 2
   local args="$*" c0 c1 raw net rc attempt
   echo "---------- sample ${name}: ${tool} ${args}"
-  # 冷启动竞态是概率性的（warmup 压不住），改为 FAIL 才重试：
-  # 正常路径只跑一次，数值错时最多补到 3 次，取最后一次通过的读数。
   for attempt in 1 2 3; do
     c0="$(tc_cycles)"
-    if timeout 600 "${ROOT_DIR}/build/dayan-migration/${tool}" \
-          --kernel-elf /tmp/dummy-kernel-elf ${args} >"/tmp/dy-do-${name}.log" 2>&1; then
+    if timeout 600 "${BUILD_DIR}/${tool}" \
+          --kernel-elf "${RVNPU_KERNEL_ELF}" ${args} >"${TEST_LOG_DIR}/direct-${name}.log" 2>&1; then
       rc=0
     else
       rc=1
@@ -238,8 +194,8 @@ run_direct_sample() {
     if [[ ${attempt} -lt 3 ]]; then
       echo "  retry ${name}: attempt ${attempt} FAIL，重试"
     else
-      echo "FAIL ${name}  net_cycles=${net}  raw=${raw}  (log /tmp/dy-do-${name}.log)"
-      tail -2 "/tmp/dy-do-${name}.log" | sed 's/^/    /'
+      echo "FAIL ${name}  net_cycles=${net}  raw=${raw}  (log ${TEST_LOG_DIR}/direct-${name}.log)"
+      tail -2 "${TEST_LOG_DIR}/direct-${name}.log" | sed 's/^/    /'
     fi
   done
   echo "${name},${tool},\"${args// /_}\",${rc},${raw},${net}" >>"${DIRECT_CSV}"
@@ -283,8 +239,6 @@ print(f"conv 样本 MACs={conv_m}  conv_rate={conv_rate:.4f} cyc/MAC")
 
 def ew_rate(op):
     cands = [r for n, r in samples.items() if n.split('_mid')[0] == op]
-    # 取元素数最大的样本（mid 档）：小样本的净周期被固定开销残差主导，
-    # cycles/elems 会虚高一个数量级。
     best = max(cands, key=lambda r: elems(r['args']))
     return int(best['net_cycles']) / elems(best['args'])
 rates = {op: ew_rate(op) for op in ('add', 'mul', 'div', 'sigmoid') if any(n.split('_mid')[0] == op for n in samples)}
@@ -366,10 +320,7 @@ direct_ops() {
   IFS=':' read -r CONV_IN CONV_W CONV_S CONV_P <<<"${CONV_SPEC}"
   local conv_args="--input-shape ${CONV_IN} --weight-shape ${CONV_W} --stride ${CONV_S} --pad ${CONV_P} --bias"
 
-  # 覆盖 YOLO 代表算子。silu 在 yolo 图里表达为 sigmoid+mul，
-  # 不单测；transpose 整网占比 ~0，不测；argmax 无直测入口。
-  # conv 放最后：大 conv 会让设备进入中断堆积的劣化态（后续样本周期被空转
-  # 计数污染，maxpool 曾虚高 11 倍），先测小样本再测 conv，劣化只影响它自己。
+  # 大 conv 的中断积聚会污染后续样本的周期读数，必须最后运行。
   local samples=(
     "add|test_rvnpu_elementwise|--op add --shape 2,3,5 --rhs-shape 2,3,5"
     "add_mid|test_rvnpu_elementwise|--op add --shape 1,64,2,2 --rhs-shape 1,64,2,2"
@@ -395,7 +346,6 @@ direct_ops() {
   direct_ops_summarize
 }
 
-setup_shim
 
 if [[ ${DIRECT_OPS} == 1 ]]; then
   if ! tc_available; then

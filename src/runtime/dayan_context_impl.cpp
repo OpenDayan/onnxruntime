@@ -35,13 +35,10 @@ void ConfigureLargeTransfer(npu_kernel_launch_attrs_t &attrs,
   }
 }
 
-// MAT 只支持 BF16，且要求 K 是 32 的倍数、N 是 16 的倍数：host 侧把操作数转成
-// 补零后的 BF16 布局。FloatToBf16 复用 cpu_reference.h 里的实现。
 size_t AlignUp(size_t value, size_t multiple) {
   return (value + multiple - 1) / multiple * multiple;
 }
 
-// src 是 [rows][cols] 行主序 -> [rows][kpad] 的 BF16，右侧补零。
 std::vector<uint16_t> PadToBf16(const float *src, size_t rows, size_t cols,
                                 size_t kpad) {
   std::vector<uint16_t> padded(rows * kpad, 0);
@@ -51,8 +48,6 @@ std::vector<uint16_t> PadToBf16(const float *src, size_t rows, size_t cols,
   return padded;
 }
 
-// src 是 [rows][cols] 行主序（rows=k、cols=n）-> [npad][kpad] 的 BF16：
-// 一次做完 B[k][n] -> BT[n][k] 的转置和补零。
 std::vector<uint16_t> TransposePadToBf16(const float *src, size_t rows,
                                          size_t cols, size_t kpad,
                                          size_t npad) {
@@ -64,8 +59,6 @@ std::vector<uint16_t> TransposePadToBf16(const float *src, size_t rows,
 }
 } // namespace
 
-// 每次 launch 前填一遍 attrs。这里的 task_dim/task_mode 是启动网格（单核），
-// 与内核描述符里声明的 tasks-per-Core 上限是两件事。
 #define DAYAN_ATTRS(name)                                                      \
   npu_kernel_launch_attrs_t attrs{};                                           \
   npu_kernel_launch_attrs_init(&attrs, runtime_.context(), runtime_.stream(),  \
@@ -92,22 +85,16 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
   const bool same = shape.lhs_elements == shape.output_elements &&
                     shape.rhs_elements == shape.output_elements;
   const size_t bytes = shape.output_elements * 4;
-  // Optional task labels make full-network dyperf aggregation unambiguous.
-  // Default names stay unchanged for existing trace regression tools.
   const bool named_profile = std::getenv("RVNPU_PROFILE_OPERATOR_NAMES") != nullptr;
   const char *binary_task = code == 0 ? "ort-Add" : code == 1 ? "ort-Mul"
       : code == 2 ? "ort-Sub" : "ort-Div";
   DAYAN_ATTRS(named_profile ? binary_task : "ort-binary");
-  // The contiguous Add/Mul path is task-partitionable. Use all four cores
-  // once the transfer size is large enough to amortize the extra launch
-  // synchronization; the broadcast fallback remains single-core.
   if (same && runtime_.supports_four_core() && shape.output_elements >= 8192) {
     attrs.config.task_dim = NPUTaskDim3{4U, 1U, 1U};
     attrs.config.task_mode = NPUTaskMode::kFourCore;
   }
   int status = 0;
   if (same) {
-    // 逐元素内核按 1024 个元素一批处理，两侧输入和输出都补零到这个粒度。
     const size_t padded = (shape.output_elements + 1023) / 1024 * 1024;
     std::vector<float> pl(padded, 0.0f), pr(padded, 0.0f);
     std::copy_n(lhs, shape.output_elements, pl.begin());
@@ -126,9 +113,6 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
     if (status == 0)
       CopyFromDevice(out, c.Get(), bytes);
   } else {
-    // 广播：两侧都保留原始 shape，由设备 kernel 对每一侧分别做
-    // stride-0 广播。这样既保留原来单边广播的快速路径，也覆盖
-    // [1,8400,1] * [1,1,4] 这类两个输入都小于输出的后处理形状。
     const bool commutative_swap = shape.swap_inputs && code <= 1;
     const size_t a_elements =
         commutative_swap ? shape.rhs_elements : shape.lhs_elements;
@@ -146,10 +130,6 @@ void DeviceContext::RunBinary(const char *op, const float *lhs,
         break;
       contiguous *= ld[dimension];
     }
-    // The device broadcast kernel enters its task-partitionable contiguous
-    // path only when the non-broadcast input covers the output shape and the
-    // common inner span is request-aligned. Match that predicate here so the
-    // host does not enable four-core mode for the scalar fallback.
     if (code <= 1 && ld == shape.output_dims && contiguous >= 16 &&
         contiguous % 16 == 0) {
       ConfigureLargeTransfer(attrs, runtime_.supports_four_core(),
@@ -232,9 +212,6 @@ void DeviceContext::RunConcat(const std::vector<const float *> &inputs,
   std::lock_guard lock(mutex_);
   size_t outb = s.output_elements * 4;
   DayanDeviceBuffer out(runtime_, outb);
-  // Concat kernels cover every output slice.  The host output is therefore
-  // not an input to the operation; copying it to the device only adds a
-  // full-size U2D transfer before the first slice is written.
   DAYAN_ATTRS("ort-concat");
   int32_t axis_offset = 0;
   for (size_t i = 0; i < inputs.size(); ++i) {
@@ -393,9 +370,6 @@ void DeviceContext::RunSoftmax(const float *x, float *y,
   DayanDeviceBuffer i(runtime_, b), o(runtime_, b);
   CopyToDevice(i.Get(), x, b);
   DAYAN_ATTRS("ort-softmax");
-  // Softmax shards independent outer/chunk units across the X task
-  // dimension. Keep tiny rows single-core, but use all available cores for
-  // the YOLO-sized DFL tensor so the SFU/reduction work is not serialized.
   ConfigureLargeTransfer(attrs, runtime_.supports_four_core(), s.elements);
   RequireSuccess(
       rvnpu_softmax_axis1_fp32(i.Get(), o.Get(), s.outer, s.axis, s.inner, &attrs),
@@ -446,10 +420,7 @@ void DeviceContext::RunMaxPool(const float *x, float *y,
   DayanDeviceBuffer in(runtime_, ib), out(runtime_, ob);
   CopyToDevice(in.Get(), x, ib);
   DAYAN_ATTRS("ort-maxpool");
-  // MaxPool currently shards planes through the kernel's local URAM staging.
-  // Keep the EP path single-core until the four-core 5x5 YOLO shape has a
-  // clean RTL result; the previous unvalidated four-core launch produced
-  // AXIM64 RLAST errors during the full network run.
+  // 四核 MaxPool 的 5x5 YOLO 形状尚未通过 RTL 验证，保持单核。
   RequireSuccess(rvnpu_maxpool2d_nchw_fp32(
                      in.Get(), out.Get(), s.batch, s.channels, s.input_h,
                      s.input_w, s.output_h, s.output_w, s.kernel_h, s.kernel_w,
@@ -559,8 +530,6 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   if (s.m == 0 || s.n == 0 || s.k == 0)
     return;
   std::lock_guard lock(mutex_);
-  // A/B 转成 BF16 并按 MAT 的对齐要求补零：kpad 是 32 的倍数、npad 是 16 的倍数。
-  // 补零处乘出来是 0，不影响结果。
   const size_t kpad = AlignUp(static_cast<size_t>(s.k), 32);
   const size_t npad = AlignUp(static_cast<size_t>(s.n), 16);
   const std::vector<uint16_t> a_bf16 =
@@ -573,8 +542,6 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   DayanDeviceBuffer ai(runtime_, ab), bi(runtime_, btb), out(runtime_, ob);
   CopyToDevice(ai.Get(), a_bf16.data(), ab);
   CopyToDevice(bi.Get(), bt_bf16.data(), btb);
-  // GEMM 使用 demo 的 matmul_bf16_1c 内核族：按每-Core URAM 容量选择
-  // 1.5 MiB/768 KiB tile，并在具备四核拓扑时使用四核独立 tile launch。
   const MatmulBf16Config config{
       static_cast<uint64_t>(s.m), static_cast<uint64_t>(npad),
       static_cast<uint64_t>(kpad), kpad * 2, kpad * 2, npad * 4};
@@ -595,7 +562,6 @@ void DeviceContext::RunMatMul(const float *a, const float *b, float *y,
   const auto launch = small_uram ? matmul_bf16_1c_small : matmul_bf16_1c;
   RequireSuccess(launch(cfg.Get(), ai.Get(), bi.Get(), out.Get(), &attrs),
                  "MatMul");
-  // C 按 [m][npad] 落盘，只取回前 n 列。
   std::vector<float> padded(static_cast<size_t>(s.m) * npad);
   CopyFromDevice(padded.data(), out.Get(), ob);
   for (int32_t row = 0; row < s.m; ++row)
@@ -611,10 +577,6 @@ void DeviceContext::ValidateConvResources(const ConvShape &s) {
       ci * co * 2 > limit || ci * co * s.kernel_w * 2 > limit ||
       co * 4 > limit || co * s.output_w * 4 > limit)
     throw std::invalid_argument("Conv device byte stride exceeds uint32");
-  // Conservative per-invocation release envelope, not total/free DRAM.
-  // The qualified RTL server uses a 4 GiB normal-memory region. Keep ample
-  // room for firmware, launch descriptors and other operators. RunConv keeps
-  // only one group and one batch's input/output buffers resident at a time.
   constexpr uint64_t resident_limit = 256ULL * 1024 * 1024;
   const uint64_t input_bytes = CheckedMultiply(
       CheckedMultiply(ci, s.input_h, "Conv resident input"),
@@ -625,7 +587,6 @@ void DeviceContext::ValidateConvResources(const ConvShape &s) {
   const uint64_t output_bytes = CheckedMultiply(
       CheckedMultiply(co, s.output_h, "Conv resident output"),
       uint64_t(s.output_w) * 4, "Conv resident output bytes");
-  // Server rounds each normal Buffer to 4 KiB with its MMU enabled.
   auto page_bytes = [](uint64_t bytes) {
     return (bytes + 4095) & ~uint64_t(4095);
   };
@@ -634,8 +595,6 @@ void DeviceContext::ValidateConvResources(const ConvShape &s) {
       page_bytes(input_bytes) + page_bytes(weight_bytes) +
           page_bytes(output_bytes) + 4096 > resident_limit)
     throw std::invalid_argument("Conv resident buffers exceed 256 MiB envelope");
-  // Conservative release envelope, not a claim about undocumented register
-  // maxima. Broaden only with device numerical tests.
   if (s.kernel_h > 7 || s.kernel_w > 7 || s.stride_h > 3 || s.stride_w > 3 ||
       s.dilation_h > 3 || s.dilation_w > 3)
     throw std::invalid_argument(
@@ -791,9 +750,7 @@ void DeviceContext::RunConv(const float *input, const float *weight,
           NPUTaskMode::kFourCore;
       attrs.timeout_ms = kTimeout;
 #if defined(RVNPU_CONV_PROFILE)
-      // Cap this experimental launch wait; a timeout is not proof that the
-      // device has cancelled the kernel. The runner must not submit another
-      // call until the outstanding work is confirmed terminal.
+      // 超时后必须确认任务已终止，才能再次提交。
       attrs.timeout_ms = 45U * 60U * 1000U;
       const uint64_t call_id = ++next_call_id;
       std::memset(records, 0, sizeof(records));
