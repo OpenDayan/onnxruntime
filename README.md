@@ -33,14 +33,16 @@ tests/
 | 仓库 | 分支 | 用途 |
 |---|---|---|
 | onnxruntime(本仓库) | `main` | EP 插件、runtime、测试 |
-| dayan-base | `rvtv2/stable` | dayan 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
-| npu-cluster-sim | `main` | RTL 仿真器 TestCluster |
+| dayan-base | `rvtv2/onnx-kernels` | 当前 ONNX 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
+| npu-cluster-sim | `main` |  RTL 模拟  |
+| dayan-emu | `rvtv2/stable` | C 模拟  |
 
 配置环境变量：
 
 ```bash
 export DAYAN_ROOT=/path/to/dayan-base
 export RTLSIM_ROOT=/path/to/npu-cluster-sim
+export DAYAN_EMU_DIR=/path/to/dayan-emu
 ```
 
 ## 3. 首次准备与编译
@@ -82,13 +84,28 @@ make -j8
 
 ## 4. 启动模拟器与 dayan_server
 
+### RTL 模拟
+
 ```bash
-./scripts/start_sim.sh
+bash scripts/start_rtl_sim.sh
 ```
 
 `DAYAN_SERVER_SOCKET`、`DAYAN_SERVER_LOG`、`DAYAN_XDMA_DEVICE_DIR`
 分别覆盖设备 socket、日志和 XDMA 目录。测试通过 `DAYAN_SERVER_SOCKET`
 连接 dayan_server。
+
+### C 模拟（dayan-emu）
+
+先构建 dayan-emu 配套的定制 QEMU：
+
+```bash
+make -C "${DAYAN_EMU_DIR}" qemu NPU_QEMU_JOBS=8
+make -C "${DAYAN_EMU_DIR}" -j4 NPU_QEMU_JOBS=8
+bash scripts/start_cmodel_sim.sh
+```
+
+C 模拟启动脚本以前台运行，默认四核、`core-mask=0xf`、4096 MiB DRAM，
+统一模拟器、QEMU 和 Server 的内存配置。
 
 ## 5. 测试
 

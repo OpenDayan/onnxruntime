@@ -15,6 +15,7 @@
 # See the Mulan PSL v2 for more details.
 #***************************************************************************************
 
+# RTL backend: TestCluster + dayan_server.
 set -u
 : "${RTLSIM_ROOT:?set RTLSIM_ROOT to the npu-cluster-sim repository root}"
 : "${DAYAN_ROOT:?set DAYAN_ROOT to the dayan-base repository root}"
