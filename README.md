@@ -33,7 +33,7 @@ tests/
 | 仓库 | 分支 | 用途 |
 |---|---|---|
 | onnxruntime(本仓库) | `main` | EP 插件、runtime、测试 |
-| dayan-base | `rvtv2/onnx-kernels` | 当前 ONNX 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
+| dayan-base | `rvtv2/stable` | 当前 ONNX 内核源码(demo/onnx)、dycc 编译器、dayan_server、设备固件 |
 | npu-cluster-sim | `main` |  RTL 模拟  |
 | dayan-emu | `rvtv2/stable` | C 模拟  |
 
