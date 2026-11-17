@@ -94,17 +94,17 @@ bash scripts/start_rtl_sim.sh
 分别覆盖设备 socket、日志和 XDMA 目录。测试通过 `DAYAN_SERVER_SOCKET`
 连接 dayan_server。
 
-### C 模拟（dayan-emu）
+### 模拟器（dayan-emu）
 
 先构建 dayan-emu 配套的定制 QEMU：
 
 ```bash
 make -C "${DAYAN_EMU_DIR}" qemu NPU_QEMU_JOBS=8
 make -C "${DAYAN_EMU_DIR}" -j4 NPU_QEMU_JOBS=8
-bash scripts/start_cmodel_sim.sh
+bash scripts/start_emu_sim.sh
 ```
 
-C 模拟启动脚本以前台运行，默认四核、`core-mask=0xf`、4096 MiB DRAM，
+模拟器启动脚本以前台运行，默认四核、`core-mask=0xf`、4096 MiB DRAM，
 统一模拟器、QEMU 和 Server 的内存配置。
 
 ## 5. 测试

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C-model backend: dayan-emu + custom QEMU + dayan_server.
+# dayan-emu backend: emulator + custom QEMU + dayan_server.
 # No RTL simulator or npu-setup checkout is used. Build artifacts separately.
 set -euo pipefail
 
@@ -10,12 +10,16 @@ DAYAN_EMU_CORES="${DAYAN_EMU_CORES:-4}"
 DAYAN_EMU_MEMORY_MIB="${DAYAN_EMU_MEMORY_MIB:-4096}"
 DAYAN_SERVER_SOCKET="${DAYAN_SERVER_SOCKET:-/tmp/dayan-server.sock}"
 DAYAN_EMU_LOG_DIR="${DAYAN_EMU_LOG_DIR:-${ROOT_DIR}/build/emu}"
-QEMU_DL_BIN="${QEMU_DL_BIN:-${DAYAN_EMU_DIR}/deps/npu-qemu/build/dl-riscv64}"
+DAYAN_EMU_SHM_DIR="${DAYAN_EMU_SHM_DIR:-}"
+SHM_DIR="${DAYAN_EMU_SHM_DIR:-/dev/shm}"
+QEMU_DL_BIN="${QEMU_DL_BIN:-${DAYAN_EMU_DIR}/deps/QEMU/build/dl-riscv64}"
+[[ -x "$QEMU_DL_BIN" ]] ||
+    QEMU_DL_BIN="${DAYAN_EMU_DIR}/deps/npu-qemu/build/dl-riscv64"
 DEVICE_DIR="${DAYAN_XDMA_DEVICE_DIR:-${DAYAN_EMU_LOG_DIR}/virtual_npu}"
 
 if [[ "${1:-}" == --help ]]; then
     cat <<'EOF'
-Usage: bash scripts/start_cmodel_sim.sh
+Usage: bash scripts/start_emu_sim.sh
 
 Foreground launcher; Ctrl-C stops only the processes it starts.
 Build QEMU/emulator, dayan-base firmware/Runtime and the ONNX EP first.
@@ -26,6 +30,8 @@ Environment:
   QEMU_DL_BIN            matching custom QEMU executable
   DAYAN_EMU_CORES        1..4 (default: 4)
   DAYAN_EMU_MEMORY_MIB   shared DRAM/QEMU/HAL size, MiB (default: 4096)
+  DAYAN_EMU_SHM_DIR      file-backed mappings instead of /dev/shm (optional)
+  DAYAN_EMU_MACHINE      QEMU machine name (default: dayan-v0)
   DAYAN_SERVER_SOCKET   Runtime socket (default: /tmp/dayan-server.sock)
   DAYAN_EMU_LOG_DIR      logs (default: onnxruntime/build/emu)
   DAYAN_XDMA_DEVICE_DIR  FUSE endpoints (default: LOG_DIR/virtual_npu)
@@ -42,7 +48,8 @@ fi
 [[ "$DAYAN_EMU_MEMORY_MIB" =~ ^[1-9][0-9]*$ ]] ||
     { echo "DAYAN_EMU_MEMORY_MIB must be a positive integer" >&2; exit 2; }
 
-EMU="${DAYAN_EMU_DIR}/bin/rvt_emulator"
+EMU="${DAYAN_EMU_DIR}/bin/dayan-emu"
+[[ -x "$EMU" ]] || EMU="${DAYAN_EMU_DIR}/bin/rvt_emulator"
 SERVER="${DAYAN_ROOT}/build/host/driver/dayan_server"
 BOOTROM="${DAYAN_ROOT}/device/bl0/bootrom.elf"
 FIRMWARE="${DAYAN_ROOT}/build/device/npu-os.elf"
@@ -57,22 +64,24 @@ done
     { echo "/dev/fuse is not accessible" >&2; exit 2; }
 command -v fusermount3 >/dev/null
 command -v setsid >/dev/null
-if pgrep -x rvt_emulator >/dev/null || pgrep -x dl-riscv64 >/dev/null ||
+if pgrep -x dayan-emu >/dev/null || pgrep -x rvt_emulator >/dev/null ||
+   pgrep -x dl-riscv64 >/dev/null ||
    pgrep -x TestCluster >/dev/null || findmnt -rn --mountpoint "$DEVICE_DIR" >/dev/null; then
     echo "An emulator/RTL backend or its FUSE mount is already active; refusing to stop it." >&2
     exit 2
 fi
 
-IPC_FILES=(/tmp/card0_rvt_msg /tmp/card0_rvt_inst_req
-           /tmp/card0_rvt_inst_rsp /tmp/card0_rvt_mmu /dev/shm/dram_shm_0)
+IPC_FILES=(/tmp/card0_dayan_msg /tmp/card0_dayan_inst_req
+           /tmp/card0_dayan_inst_rsp /tmp/card0_dayan_mmu
+           "${SHM_DIR}/dram_shm_0")
 for ((core=0; core<8; core++)); do
-    IPC_FILES+=("/dev/shm/uram_shm_${core}")
+    IPC_FILES+=("${SHM_DIR}/uram_shm_${core}")
 done
 for file in "$DAYAN_SERVER_SOCKET" "${IPC_FILES[@]}"; do
     if [[ -e "$file" || -L "$file" ]]; then
         # The emulator itself unlinks/rebinds its sockets. Allow only an
         # owned, non-symlink socket with no live kernel socket entry.
-        if [[ "$file" == /tmp/card0_rvt_* && -S "$file" && -O "$file" &&
+        if [[ "$file" == /tmp/card0_dayan_* && -S "$file" && -O "$file" &&
               ! -L "$file" ]] &&
            ! awk -v path="$file" '$8 == path { found=1 } END { exit !found }' /proc/net/unix; then
             echo "Emulator may replace its inactive socket: $file" >&2
@@ -83,19 +92,22 @@ for file in "$DAYAN_SERVER_SOCKET" "${IPC_FILES[@]}"; do
     fi
 done
 # Conservative capacity check: DRAM + per-core URAM + 8 MiB spare.
-# tmpfs is demand-paged; this checks capacity, not host/cgroup RAM availability.
-python3 - "$DAYAN_EMU_MEMORY_MIB" "$DAYAN_EMU_CORES" <<'PY'
+# Backing store is demand-paged; this checks capacity, not host RAM availability.
+python3 - "$SHM_DIR" "$DAYAN_EMU_MEMORY_MIB" "$DAYAN_EMU_CORES" <<'PY'
 import os
 import sys
-s = os.statvfs("/dev/shm")
+shm_dir, memory_mib, cores = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+s = os.statvfs(shm_dir)
 available = s.f_bavail * s.f_frsize
-needed = int(sys.argv[1]) * 1048576 + int(sys.argv[2]) * 1536 * 1024 + 8 * 1048576
+needed = memory_mib * 1048576 + cores * 1536 * 1024 + 8 * 1048576
 if available < needed:
-    sys.exit(f"/dev/shm has {available / 1048576:.1f} MiB available; "
+    sys.exit(f"{shm_dir} has {available / 1048576:.1f} MiB available; "
              f"need at least {needed / 1048576:.1f} MiB for this configuration. "
-             "Increase the container shared-memory limit, or explicitly choose "
+             "Increase the container shared-memory limit, set "
+             "DAYAN_EMU_SHM_DIR to a larger filesystem, or explicitly choose "
              "a smaller DAYAN_EMU_MEMORY_MIB for a small smoke test.")
 PY
+[[ -z "$DAYAN_EMU_SHM_DIR" ]] || mkdir -p "$DAYAN_EMU_SHM_DIR"
 
 mkdir -p "$DAYAN_EMU_LOG_DIR" "$DEVICE_DIR"
 emu_pid=
@@ -133,9 +145,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 export DAYAN_EMU_MEMORY_MIB
+[[ -z "$DAYAN_EMU_SHM_DIR" ]] || export DAYAN_EMU_SHM_DIR
 SECONDS=0
 NPU_DEVICE_PREFIX="$DEVICE_DIR" setsid "$EMU" -c "$DAYAN_EMU_CORES" "$QEMU_DL_BIN" \
-    -monitor null -bios "$BOOTROM" -machine rvtng-v0 \
+    -monitor null -bios "$BOOTROM" -machine "${DAYAN_EMU_MACHINE:-dayan-v0}" \
     -nographic -serial none -m "$DAYAN_EMU_MEMORY_MIB" \
     >"$DAYAN_EMU_LOG_DIR/emulator.log" 2>&1 &
 emu_pid=$!
@@ -167,7 +180,7 @@ for ((attempt=0; attempt<600; attempt++)); do
 done
 [[ -S "$DAYAN_SERVER_SOCKET" ]] ||
     { echo "Server readiness timed out; see server.log" >&2; exit 1; }
-printf 'READY backend=cmodel cores=%s memory_mib=%s startup_seconds=%s socket=%s\n' \
+printf 'READY backend=dayan-emu cores=%s memory_mib=%s startup_seconds=%s socket=%s\n' \
     "$DAYAN_EMU_CORES" "$DAYAN_EMU_MEMORY_MIB" "$SECONDS" "$DAYAN_SERVER_SOCKET"
 printf 'Logs: %s; Ctrl-C to stop.\n' "$DAYAN_EMU_LOG_DIR"
 while kill -0 "$emu_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null; do
